@@ -182,10 +182,6 @@ export default function Advisor() {
       setError('Please upload the current house photo first.')
       return
     }
-    if (!targetImageBase64) {
-      setError('Please upload your modified/expected plan image.')
-      return
-    }
     if (!firstMessage.trim()) {
       setError('Please describe your needs and expected outcome.')
       return
@@ -202,7 +198,7 @@ export default function Advisor() {
         body: JSON.stringify({
           image: currentImageBase64,
           currentImage: currentImageBase64,
-          targetImage: targetImageBase64,
+          targetImage: targetImageBase64 || undefined,
           firstMessage: firstMessage.trim() || undefined,
           propertyType: 'House / Townhouse',
           location: location.trim() || undefined,
@@ -372,7 +368,7 @@ export default function Advisor() {
             )}
           </div>
 
-          <label className="advisor-upload__label">Modified target image (required)</label>
+          <label className="advisor-upload__label">Modified target image (optional)</label>
           <div
             className="advisor-upload__zone"
             onClick={() => targetImageInputRef.current?.click()}
@@ -419,7 +415,7 @@ export default function Advisor() {
             type="button"
             className="btn btn--primary"
             onClick={startSession}
-            disabled={!currentImageBase64 || !targetImageBase64 || loading}
+            disabled={!currentImageBase64 || loading}
           >
             {loading ? 'Calculating…' : 'Calculate project economics'}
           </button>
