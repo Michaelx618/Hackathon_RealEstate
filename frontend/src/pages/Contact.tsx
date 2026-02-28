@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { FormEvent, useState } from 'react'
 
 export default function Contact() {
   const [submitted, setSubmitted] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setSubmitted(true)
   }

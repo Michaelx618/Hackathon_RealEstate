@@ -1,85 +1,304 @@
 import { randomUUID } from 'crypto';
 import OpenAI from 'openai';
 import type { Response } from 'express';
+import pdfParse from 'pdf-parse';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const SYSTEM_PROMPT = `You are a design and renovation advisor focused on helping people convert or renovate their property. Many users want to convert a house to Airbnb/short-term rental, add a suite or in-law unit, or turn one property into multiple rental units. The user has shared a floor plan image. Give specific, practical advice tailored to their property type and goal.
+const SYSTEM_PROMPT = `You are a renovation, construction-cost, and rental-return advisor.
 
-Structure your first reply as follows:
+The owner may provide:
+- A current-state photo or floor plan image (required)
+- An optional target-outcome reference image (what they want to build)
+- Optional supporting documents (land size, floor plans, PDFs, text notes)
+- Optional numeric area fields
 
-1. **Renovation plan (phases):** Start with a clear phased plan the user can follow. Use exactly this format so it can be shown as a timeline:
-   **Phase 1:** [One short line: e.g. "Permits & planning" or "Foundation work"]
-   **Phase 2:** [One short line: e.g. "Kitchen and bath updates"]
-   **Phase 3:** [One short line: e.g. "Layout and finishes"]
-   **Phase 4:** [One short line if needed: e.g. "Furnishing for rental"]
-   Use 3–4 phases. Each phase line should be one brief phrase or sentence. Then continue with full detail below.
+Primary benchmark inputs (public websites):
+- Toronto renovation benchmarks: CAD $100-$300/sqft for broad remodel scopes; full-gut projects can reach CAD $200-$500/sqft. Source context: Route Homes + HomeStars.
+- City of Toronto permit fee benchmark (effective Jan 1, 2026): residential alterations/additions CAD $13.41 per m2, minimum fee CAD $214.79.
+- Toronto rent benchmarks: CAD $3.82/sqft (Urbanation, Q2 2025 adjusted average rent) and CAD $2,498/month average apartment rent (Rentals.ca, January 2026 rent report).
+- Zoning reference map: https://map.toronto.ca/maps/map.jsp?app=ZBL_CONSULT
 
-2. **Design & renovation:** What to change (kitchen, bath, layout, walls), in what order, and why. Adapt to their goal (e.g. Airbnb vs long-term tenant, adding a suite vs full conversion). Consider property type (condo vs single-family, HOA rules).
-3. **Conversions (Airbnb, suites, multi-unit):** Which rooms or areas could become a separate unit, suite, or listing; ADU potential; layout changes for short-term or long-term rentability. Mention that they must confirm zoning and local rules (e.g. short-term rental regulations).
-4. **Legal & permits:** If the user gave a location, mention how permits and zoning often work there. Briefly note what usually requires permits (structural, electrical, plumbing, adding units). Always add: "This is not legal advice; confirm with your local permitting office or a lawyer."
-5. **Cost:** Give ballpark ranges. Use this format when summarizing: "**Estimated cost:** $X,000–$Y,000 for [scope]" so the user can quickly see numbers. Add that these are estimates and they should get local quotes.
-6. **Design:** Flow, finishes, and layout tips that fit their goal (e.g. durable finishes if renting out).
+How to calculate:
+1. Use the current image to estimate rough interior size in sqft.
+2. Cross-check that estimate against document data; if docs are missing, say uncertainty is higher.
+3. Compare current image vs target image (if provided) to infer renovation scope level and complexity.
+4. Provide construction cost and total out-of-pocket ranges in CAD.
+5. Include permit + soft costs in out-of-pocket. Reasonable soft-cost assumptions are acceptable when exact values are unknown.
+6. Estimate rental return from market benchmarks and the matched rentable area.
+7. State assumptions clearly and keep math internally consistent.
+8. If the location is not Toronto or unknown, explicitly say you are using Toronto benchmarks as a proxy and recommend local quote validation.
 
-Be conversational, clear, and responsive to follow-up questions. If something is outside your expertise (e.g. structural or legal), say so and suggest they consult a professional.`;
+The first reply MUST include these exact bold labels on separate lines:
+**Estimated current size from image:** [value]
+**Documented size:** [value or "Not provided"]
+**Matched size used for estimate:** [value]
+**Construction cost:** [CAD range + short basis]
+**Permit & soft costs:** [CAD range + short basis]
+**Total out-of-pocket:** [CAD range]
+**Estimated monthly rent:** [CAD range]
+**Estimated annual gross rent:** [CAD range]
+**Simple payback:** [years range]
+
+After those lines, include these sections:
+1. **Renovation plan (phases):**
+   **Phase 1:** ...
+   **Phase 2:** ...
+   **Phase 3:** ...
+   **Phase 4:** ... (optional)
+2. **Current vs target scope:** what exists now vs desired outcome and key work items.
+3. **Legal & zoning checks:** mention zoning and permit checks tied to location, and include the Toronto zoning map link when Toronto is mentioned.
+4. **Assumptions + confidence:** list the biggest assumptions and confidence level.
+5. **Next data to improve accuracy:** what docs/measurements/quotes to collect next.
+
+Always include this sentence exactly once: "This is not legal, engineering, or financial advice; confirm with licensed local professionals."`;
 
 type Message = { role: 'user' | 'assistant'; content: string };
-type Session = { messages: Message[]; imageBase64: string | null; propertyType?: string; location?: string };
+
+export type AdvisorDocumentInput = {
+  name: string;
+  mimeType: string;
+  dataUrl?: string;
+  textContent?: string;
+};
+
+export type AdvisorSessionInput = {
+  currentImage: string;
+  targetImage?: string;
+  firstMessage?: string;
+  propertyType?: string;
+  location?: string;
+  documentNotes?: string;
+  supportingDocs?: AdvisorDocumentInput[];
+  landAreaSqft?: number;
+  interiorAreaSqft?: number;
+  desiredRentableSqft?: number;
+  renovationLevel?: string;
+};
+
+type Session = {
+  messages: Message[];
+  context: AdvisorSessionInput;
+  firstUserMultimodal?: OpenAI.Chat.Completions.ChatCompletionContentPart[];
+};
+
+type PreparedDocuments = {
+  textBlocks: string[];
+  imageDataUrls: string[];
+  notes: string[];
+};
 
 const sessions = new Map<string, Session>();
+const MAX_DOCS = 8;
+const MAX_DOC_IMAGE_COUNT = 4;
+const MAX_TEXT_CHARS_PER_DOC = 7000;
 
 function normalizeImageUrl(image: string): string {
   if (image.startsWith('data:')) return image;
   return `data:image/jpeg;base64,${image}`;
 }
 
-function buildUserContentWithImage(imageBase64: string, text?: string, propertyType?: string, location?: string): OpenAI.Chat.Completions.ChatCompletionContentPart[] {
-  const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
-    {
-      type: 'image_url',
-      image_url: { url: normalizeImageUrl(imageBase64) },
-    },
+function truncate(text: string, max: number): string {
+  const clean = text.replace(/\u0000/g, '').trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max)}...`;
+}
+
+function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } | null {
+  const comma = dataUrl.indexOf(',');
+  if (comma < 0) return null;
+  const header = dataUrl.slice(0, comma);
+  const payload = dataUrl.slice(comma + 1);
+  const mimeMatch = header.match(/^data:([^;,]+)(;base64)?/i);
+  const mimeType = mimeMatch?.[1] || 'application/octet-stream';
+  const isBase64 = /;base64/i.test(header);
+  try {
+    const buffer = isBase64
+      ? Buffer.from(payload, 'base64')
+      : Buffer.from(decodeURIComponent(payload), 'utf8');
+    return { mimeType, buffer };
+  } catch {
+    return null;
+  }
+}
+
+async function prepareSupportingDocuments(docs: AdvisorDocumentInput[] | undefined): Promise<PreparedDocuments> {
+  const textBlocks: string[] = [];
+  const imageDataUrls: string[] = [];
+  const notes: string[] = [];
+
+  for (const rawDoc of (docs || []).slice(0, MAX_DOCS)) {
+    const name = rawDoc.name?.trim() || 'Untitled document';
+    const mimeType = rawDoc.mimeType?.trim() || 'application/octet-stream';
+
+    if (mimeType.startsWith('image/') && rawDoc.dataUrl && imageDataUrls.length < MAX_DOC_IMAGE_COUNT) {
+      imageDataUrls.push(normalizeImageUrl(rawDoc.dataUrl));
+      notes.push(`Included image document: ${name}.`);
+      continue;
+    }
+
+    if (rawDoc.textContent?.trim()) {
+      textBlocks.push(`Document "${name}" (${mimeType}):\n${truncate(rawDoc.textContent, MAX_TEXT_CHARS_PER_DOC)}`);
+      continue;
+    }
+
+    if (mimeType === 'application/pdf' && rawDoc.dataUrl) {
+      const decoded = decodeDataUrl(rawDoc.dataUrl);
+      if (!decoded) {
+        notes.push(`Could not decode PDF: ${name}.`);
+        continue;
+      }
+      try {
+        const parsed = await pdfParse(decoded.buffer);
+        const pdfText = parsed.text?.trim();
+        if (pdfText) {
+          textBlocks.push(`Document "${name}" (PDF extract):\n${truncate(pdfText, MAX_TEXT_CHARS_PER_DOC)}`);
+        } else {
+          notes.push(`PDF had no extractable text: ${name}.`);
+        }
+      } catch {
+        notes.push(`Could not parse PDF text: ${name}.`);
+      }
+      continue;
+    }
+
+    if (rawDoc.dataUrl && (mimeType.startsWith('text/') || mimeType === 'application/json')) {
+      const decoded = decodeDataUrl(rawDoc.dataUrl);
+      if (decoded) {
+        textBlocks.push(`Document "${name}" (${mimeType}):\n${truncate(decoded.buffer.toString('utf8'), MAX_TEXT_CHARS_PER_DOC)}`);
+      } else {
+        notes.push(`Could not decode text document: ${name}.`);
+      }
+      continue;
+    }
+
+    notes.push(`Unsupported document type (${mimeType}) for ${name}.`);
+  }
+
+  return { textBlocks, imageDataUrls, notes };
+}
+
+function buildContextText(context: AdvisorSessionInput, firstMessage?: string): string {
+  const lines: string[] = [
+    'Use the attached images/documents to estimate construction cost, total out-of-pocket cash, and rental return.',
   ];
-  const prefixParts: string[] = [];
-  if (location?.trim()) prefixParts.push(`Location: ${location.trim()}.`);
-  if (propertyType) prefixParts.push(`This is a ${propertyType}.`);
-  const prefix = prefixParts.length ? prefixParts.join(' ') + ' ' : '';
-  const defaultText = "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, permits to consider, and design tips. Tailor permits, zoning, and cost ballparks to my location when possible.";
-  const fullText = text?.trim() ? `${prefix}${text.trim()}` : `${prefix}${defaultText}`;
-  parts.push({ type: 'text', text: fullText });
-  return parts;
+
+  if (context.location?.trim()) lines.push(`Location: ${context.location.trim()}.`);
+  if (context.propertyType?.trim()) lines.push(`Property type: ${context.propertyType.trim()}.`);
+  if (context.renovationLevel?.trim()) lines.push(`Renovation level preference: ${context.renovationLevel.trim()}.`);
+  if (typeof context.landAreaSqft === 'number') lines.push(`Land size from owner/docs: ${context.landAreaSqft.toLocaleString()} sqft.`);
+  if (typeof context.interiorAreaSqft === 'number') lines.push(`Interior size from owner/docs: ${context.interiorAreaSqft.toLocaleString()} sqft.`);
+  if (typeof context.desiredRentableSqft === 'number') lines.push(`Desired rentable area target: ${context.desiredRentableSqft.toLocaleString()} sqft.`);
+  if (context.documentNotes?.trim()) lines.push(`Owner document notes: ${context.documentNotes.trim()}`);
+
+  const goal = firstMessage?.trim()
+    || context.firstMessage?.trim()
+    || 'I want to estimate construction cost, total out-of-pocket, and rental return for my renovation/conversion.';
+  lines.push(`Owner goal: ${goal}`);
+
+  return lines.join('\n');
+}
+
+async function buildInitialUserContent(
+  context: AdvisorSessionInput,
+  firstMessage?: string,
+): Promise<{ parts: OpenAI.Chat.Completions.ChatCompletionContentPart[]; summaryText: string }> {
+  const docs = await prepareSupportingDocuments(context.supportingDocs);
+
+  const contextSections: string[] = [
+    buildContextText(context, firstMessage),
+    'Image order: first image is current state/floor plan; second image (if present) is desired outcome reference.',
+  ];
+
+  if (docs.textBlocks.length > 0) {
+    contextSections.push(`Supporting document excerpts:\n${docs.textBlocks.join('\n\n')}`);
+  }
+  if (docs.notes.length > 0) {
+    contextSections.push(`Document parsing notes:\n${docs.notes.map((n) => `- ${n}`).join('\n')}`);
+  }
+
+  const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+    { type: 'text', text: contextSections.join('\n\n') },
+    { type: 'image_url', image_url: { url: normalizeImageUrl(context.currentImage) } },
+  ];
+
+  if (context.targetImage) {
+    parts.push({ type: 'image_url', image_url: { url: normalizeImageUrl(context.targetImage) } });
+  }
+
+  for (const docImageUrl of docs.imageDataUrls) {
+    parts.push({ type: 'image_url', image_url: { url: docImageUrl } });
+  }
+
+  const summaryLines: string[] = [];
+  if (context.location?.trim()) summaryLines.push(`Location: ${context.location.trim()}`);
+  if (context.propertyType?.trim()) summaryLines.push(`Property: ${context.propertyType.trim()}`);
+  if (typeof context.interiorAreaSqft === 'number') summaryLines.push(`Documented interior: ${context.interiorAreaSqft.toLocaleString()} sqft`);
+  if (typeof context.landAreaSqft === 'number') summaryLines.push(`Land: ${context.landAreaSqft.toLocaleString()} sqft`);
+  if (typeof context.desiredRentableSqft === 'number') summaryLines.push(`Target rentable: ${context.desiredRentableSqft.toLocaleString()} sqft`);
+  if (context.renovationLevel?.trim()) summaryLines.push(`Renovation level: ${context.renovationLevel.trim()}`);
+  const goal = firstMessage?.trim() || context.firstMessage?.trim();
+  if (goal) summaryLines.push(`Goal: ${goal}`);
+  if (docs.textBlocks.length || docs.imageDataUrls.length) {
+    summaryLines.push(`Supporting docs: ${docs.textBlocks.length} text extract(s), ${docs.imageDataUrls.length} image(s)`);
+  }
+
+  return {
+    parts,
+    summaryText: summaryLines.join(' | ') || 'Owner uploaded project context and asked for full cost + return estimate.',
+  };
 }
 
 function sessionToMessages(session: Session): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const out: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-  const firstUser = session.messages.find((m) => m.role === 'user');
-  const hasImage = session.imageBase64 && firstUser;
-  for (let i = 0; i < session.messages.length; i++) {
-    const m = session.messages[i];
-    if (m.role === 'user') {
-      if (hasImage && i === 0) {
+  let firstUserSeen = false;
+
+  for (const message of session.messages) {
+    if (message.role === 'user') {
+      if (!firstUserSeen && session.firstUserMultimodal) {
         out.push({
           role: 'user',
-          content: buildUserContentWithImage(session.imageBase64!, m.content || undefined),
+          content: session.firstUserMultimodal,
         });
       } else {
-        out.push({ role: 'user', content: m.content });
+        out.push({ role: 'user', content: message.content });
       }
+      firstUserSeen = true;
     } else {
-      out.push({ role: 'assistant', content: m.content });
+      out.push({ role: 'assistant', content: message.content });
     }
   }
+
   return out;
 }
 
-export function createSession(imageBase64: string, firstMessage?: string, propertyType?: string, location?: string): string {
+export function createSession(input: AdvisorSessionInput): string {
   const sessionId = randomUUID();
+  const safeDocs = (input.supportingDocs || []).slice(0, MAX_DOCS).map((doc) => ({
+    name: doc.name?.trim() || 'Untitled document',
+    mimeType: doc.mimeType?.trim() || 'application/octet-stream',
+    dataUrl: doc.dataUrl,
+    textContent: doc.textContent,
+  }));
+
   sessions.set(sessionId, {
     messages: [],
-    imageBase64,
-    propertyType: propertyType || undefined,
-    location: location?.trim() || undefined,
+    context: {
+      ...input,
+      currentImage: input.currentImage,
+      targetImage: input.targetImage,
+      firstMessage: input.firstMessage,
+      propertyType: input.propertyType,
+      location: input.location?.trim() || undefined,
+      documentNotes: input.documentNotes,
+      supportingDocs: safeDocs,
+      landAreaSqft: input.landAreaSqft,
+      interiorAreaSqft: input.interiorAreaSqft,
+      desiredRentableSqft: input.desiredRentableSqft,
+      renovationLevel: input.renovationLevel,
+    },
   });
+
   return sessionId;
 }
 
@@ -95,20 +314,17 @@ export function appendMessage(sessionId: string, role: 'user' | 'assistant', con
 
 export async function streamFirstReply(
   sessionId: string,
-  imageBase64: string,
   firstMessage: string | undefined,
   res: Response,
-  propertyType?: string,
-  location?: string
 ): Promise<string> {
-  const session = sessions.get(sessionId)!;
-  const prefixParts: string[] = [];
-  if (location?.trim()) prefixParts.push(`Location: ${location.trim()}.`);
-  if (propertyType) prefixParts.push(`This is a ${propertyType}.`);
-  const prefix = prefixParts.length ? prefixParts.join(' ') + ' ' : '';
-  const userText = firstMessage?.trim() || "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, permits to consider, and design tips. Tailor advice to my location when possible.";
-  session.messages.push({ role: 'user', content: `${prefix}${userText}` });
-  const userContent = buildUserContentWithImage(imageBase64, firstMessage || undefined, propertyType, location);
+  const session = sessions.get(sessionId);
+  if (!session) {
+    throw new Error('Session not found');
+  }
+
+  const built = await buildInitialUserContent(session.context, firstMessage);
+  session.firstUserMultimodal = built.parts;
+  session.messages.push({ role: 'user', content: built.summaryText });
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
@@ -118,10 +334,10 @@ export async function streamFirstReply(
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userContent },
+      { role: 'user', content: built.parts },
     ],
     stream: true,
-    max_tokens: 1500,
+    max_tokens: 1800,
   });
 
   let fullContent = '';
@@ -159,7 +375,7 @@ export async function streamChatReply(sessionId: string, userMessage: string, re
     model: 'gpt-4o',
     messages,
     stream: true,
-    max_tokens: 1500,
+    max_tokens: 1400,
   });
 
   let fullContent = '';

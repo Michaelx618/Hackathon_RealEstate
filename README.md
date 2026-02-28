@@ -1,6 +1,6 @@
 # Renovate — AI renovation & conversion advisor
 
-**Design & renovate your property with AI.** Enter your address or location, choose property type, upload a floor plan (or any photo), and get a custom renovation plan: phased steps, cost estimates, permit notes, and design tips. Built for converting to Airbnb, adding suites, or creating rental units.
+**Design, price, and evaluate your property project with AI.** Enter your address/location, upload the current floor plan/photo, optionally upload documents (land size, plan PDFs, notes) and a target-outcome image, then get phased renovation guidance plus construction cost, total out-of-pocket, and rental-return estimates.
 
 ---
 
@@ -72,9 +72,22 @@ cd frontend && npm install && npm run dev
 
 The frontend proxies `/api` requests to the backend in development.
 
-### Design & renovate advisor
+### Construction + return advisor
 
-The **Design & renovate** flow is the main feature: users enter location, choose property type, upload a floor plan, and get AI-powered advice for converting to Airbnb, adding suites, or creating rental units (costs, permits, design). The backend uses the OpenAI API (GPT-4o with vision).
+The **Construction + return advisor** flow is the main feature: users enter location, choose property + renovation type, upload a current-state image/floor plan, optionally add supporting documents and a target-outcome image, then get:
+- image-vs-document size cross-checks
+- construction-cost range
+- permit + soft-cost assumptions
+- total out-of-pocket estimate
+- rent and simple payback estimates
+
+The backend uses the OpenAI API (GPT-4o with vision), plus public benchmark references for Toronto permit/rent/zoning context.
+
+Benchmark links used in the app:
+- Toronto zoning map: https://map.toronto.ca/maps/map.jsp?app=ZBL_CONSULT
+- Toronto building permit fees: https://www.toronto.ca/services-payments/building-construction/building-fees/building-permit-fees/
+- Rentals.ca national rent report: https://rentals.ca/national-rent-report
+- Urbanation condo rental survey (Toronto): https://urbanation.ca/news/q2-2025-condominium-rental-market-survey
 
 **API key:** Set `OPENAI_API_KEY` when running the backend (see `backend/.env.example`). Without it, the advisor returns a friendly “not configured yet” message so the rest of the app still works.
 
@@ -89,7 +102,7 @@ The **Design & renovate** flow is the main feature: users enter location, choose
    ```
 2. Open **http://localhost:5173** in your browser.
 3. **Home:** Enter a city/ZIP and click “Start my renovation plan” — you should land on the advisor with location pre-filled. Click “Design & renovate” in the nav to go there directly.
-4. **Design & renovate:** Pick a property type, enter location if not set, upload an image (any photo for testing), optionally add a goal (e.g. “Convert to Airbnb”). Click “Analyze layout”. If `OPENAI_API_KEY` is set, you’ll get a streamed reply and can send follow-up messages; if not, you’ll see the “not configured yet” message.
+4. **Construction + return advisor:** Pick property + renovation level, enter location, upload a current image (required), optionally upload target image and supporting docs, and click “Calculate project economics”. If `OPENAI_API_KEY` is set, you’ll get a streamed estimate with out-of-pocket + rent return and can send follow-up messages; if not, you’ll see the “not configured yet” message.
 5. **Listings:** Use “Example listings” and filters (city, type) — all sample data.
 6. **About / Contact:** Static pages and contact form (success message is local only).
 7. **404:** Visit e.g. `/foo` — you should see “Page not found” with a link home.
@@ -124,9 +137,9 @@ When your team sets up hosting and the API:
 
 **Title:** Renovate — AI renovation & conversion advisor
 
-**Tagline:** Get a custom renovation plan from one photo. Enter your address, upload a floor plan, and receive phased steps, cost estimates, and permit guidance for converting to Airbnb, adding suites, or creating rental units.
+**Tagline:** From current floor plan to project economics: upload current state + optional docs, then get construction cost, out-of-pocket cash estimate, and rental return.
 
-**What it does:** Users enter their address (or city/ZIP), pick a property type (single-family, townhouse, condo, etc.), and upload an image—floor plan or any photo. The app uses GPT-4o with vision to analyze the layout and return a structured renovation plan: phases (e.g. permits → kitchen/bath → finishes), design and conversion ideas (Airbnb, ADU, multi-unit), ballpark costs, permit reminders, and design tips. Location is used to tailor permit and cost guidance. Users can chat for follow-up questions. Built for redesigning, repurposing, and renovating properties.
+**What it does:** Users enter address/city/ZIP, pick property + renovation type, upload a current image/floor plan, and optionally add supporting docs (PDF/text/image), area fields, and a target-outcome image. GPT-4o with vision compares current vs target state, estimates rough size, cross-checks document space data, and returns structured outputs for construction cost, permit/soft-cost assumptions, total out-of-pocket, monthly/annual rent estimate, simple payback, phased renovation plan, and zoning/permit reminders. Users can chat for follow-up scenario analysis.
 
 **How we built it:** React + Vite (TypeScript) frontend, Node.js Express (TypeScript) backend. OpenAI API (GPT-4o) for chat and vision; streaming responses for the advisor. Frontend parses the reply for “Phase 1/2/3” and “Estimated cost” to show a timeline and cost card. Session-based chat so users can ask follow-ups. Image upload with client-side resize/compress before sending.
 

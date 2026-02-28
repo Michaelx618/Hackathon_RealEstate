@@ -7,12 +7,47 @@ import {
   streamFirstReply,
   streamChatReply,
 } from './advisor.js';
+import type { AdvisorDocumentInput, AdvisorSessionInput } from './advisor.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '35mb' }));
+
+function optionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const out = value.trim();
+  return out.length > 0 ? out : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const normalized = Number(value.replace(/,/g, '').trim());
+    if (Number.isFinite(normalized) && normalized > 0) return normalized;
+  }
+  return undefined;
+}
+
+function sanitizeSupportingDocs(value: unknown): AdvisorDocumentInput[] {
+  if (!Array.isArray(value)) return [];
+  const docs: AdvisorDocumentInput[] = [];
+
+  for (const raw of value.slice(0, 8)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const obj = raw as Record<string, unknown>;
+    const name = optionalString(obj.name) || 'Uploaded document';
+    const mimeType = optionalString(obj.mimeType) || 'application/octet-stream';
+    const textContent = optionalString(obj.textContent);
+    const dataUrl = optionalString(obj.dataUrl);
+
+    if (!textContent && !dataUrl) continue;
+    docs.push({ name, mimeType, textContent, dataUrl });
+  }
+
+  return docs;
+}
 
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'API is running' });
@@ -28,13 +63,31 @@ app.post('/api/advisor/session', async (req: Request, res: Response) => {
       res.status(503).json({ error: 'Advisor is not configured (missing OPENAI_API_KEY)' });
       return;
     }
-    const { image, firstMessage, propertyType, location } = req.body as { image?: string; firstMessage?: string; propertyType?: string; location?: string };
-    if (!image || typeof image !== 'string') {
-      res.status(400).json({ error: 'Missing or invalid image (base64 string required)' });
+
+    const body = req.body as Record<string, unknown>;
+    const currentImage = optionalString(body.currentImage) || optionalString(body.image);
+    if (!currentImage) {
+      res.status(400).json({ error: 'Missing currentImage (base64/data URL image required)' });
       return;
     }
-    const sessionId = createSession(image, firstMessage, propertyType, location);
-    await streamFirstReply(sessionId, image, firstMessage, res, propertyType, location);
+
+    const firstMessage = optionalString(body.firstMessage);
+    const sessionInput: AdvisorSessionInput = {
+      currentImage,
+      targetImage: optionalString(body.targetImage),
+      firstMessage,
+      propertyType: optionalString(body.propertyType),
+      location: optionalString(body.location),
+      documentNotes: optionalString(body.documentNotes),
+      supportingDocs: sanitizeSupportingDocs(body.supportingDocs),
+      landAreaSqft: optionalNumber(body.landAreaSqft),
+      interiorAreaSqft: optionalNumber(body.interiorAreaSqft),
+      desiredRentableSqft: optionalNumber(body.desiredRentableSqft),
+      renovationLevel: optionalString(body.renovationLevel),
+    };
+
+    const sessionId = createSession(sessionInput);
+    await streamFirstReply(sessionId, firstMessage, res);
   } catch (err) {
     console.error('Advisor session error:', err);
     if (!res.headersSent) {
