@@ -22,8 +22,8 @@ export default function Listings() {
 
   return (
     <div className="page page--listings">
-      <h1 className="page__title">All listings</h1>
-      <p className="page__subtitle">{listings.length} properties available</p>
+      <h1 className="page__title">Example listings</h1>
+      <p className="page__subtitle">{listings.length} sample properties — use Design & renovate for your own place.</p>
 
       <div className="listings-filters">
         <select

@@ -7,10 +7,12 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "tsx watch server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test:api": "tsx scripts/test-api.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
     "express": "^4.21.0",
     "openai": "^6.25.0"
   },

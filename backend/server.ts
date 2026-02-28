@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import {
@@ -8,7 +9,7 @@ import {
 } from './advisor.js';
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
@@ -27,13 +28,13 @@ app.post('/api/advisor/session', async (req: Request, res: Response) => {
       res.status(503).json({ error: 'Advisor is not configured (missing OPENAI_API_KEY)' });
       return;
     }
-    const { image, firstMessage } = req.body as { image?: string; firstMessage?: string };
+    const { image, firstMessage, propertyType, location } = req.body as { image?: string; firstMessage?: string; propertyType?: string; location?: string };
     if (!image || typeof image !== 'string') {
       res.status(400).json({ error: 'Missing or invalid image (base64 string required)' });
       return;
     }
-    const sessionId = createSession(image, firstMessage);
-    await streamFirstReply(sessionId, image, firstMessage, res);
+    const sessionId = createSession(image, firstMessage, propertyType, location);
+    await streamFirstReply(sessionId, image, firstMessage, res, propertyType, location);
   } catch (err) {
     console.error('Advisor session error:', err);
     if (!res.headersSent) {

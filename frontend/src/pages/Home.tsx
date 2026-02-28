@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { getFeaturedListings } from '../data/listings'
 
 function formatPrice(listing: { price: number; type: string }) {
@@ -9,28 +10,44 @@ function formatPrice(listing: { price: number; type: string }) {
 
 export default function Home() {
   const featuredListings = getFeaturedListings()
+  const [location, setLocation] = useState('')
+  const navigate = useNavigate()
+
+  const handleSearch = () => {
+    const q = location.trim()
+    if (q) navigate(`/advisor?location=${encodeURIComponent(q)}`)
+    else navigate('/advisor')
+  }
 
   return (
     <>
       <section className="hero">
         <div className="hero__content">
-          <h1 className="hero__title">Find your next home</h1>
+          <h1 className="hero__title">Design & renovate your property</h1>
           <p className="hero__subtitle">
-            Browse thousands of listings. Buy or rent with confidence.
+            Planning to convert your house into an Airbnb, add a suite, or turn it into a multi-unit? Get a custom renovation plan—layout, costs, permits, and design—from one photo.
           </p>
           <div className="hero__search">
-            <input type="text" placeholder="City, neighborhood, or ZIP" className="hero__input" />
-            <select className="hero__select" aria-label="Listing type">
-              <option>For Sale</option>
-              <option>For Rent</option>
-            </select>
-            <button type="button" className="hero__btn">Search</button>
+            <input
+              type="text"
+              placeholder="Address, city, or ZIP"
+              className="hero__input"
+              aria-label="Address, city, or ZIP"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            />
+            <button type="button" className="hero__btn" onClick={handleSearch}>
+              Start my renovation plan
+            </button>
           </div>
+          <p className="hero__hint">We use your location to tailor permits, zoning, and cost estimates for your area.</p>
         </div>
       </section>
 
       <section className="section featured">
-        <h2 className="section__title">Featured listings</h2>
+        <h2 className="section__title">Example properties</h2>
+        <p className="section__subtitle">Browse sample listings or jump straight to designing your own.</p>
         <div className="listings">
           {featuredListings.map((listing) => (
             <Link to={`/listings/${listing.id}`} key={listing.id} className="listing-card">
@@ -54,11 +71,11 @@ export default function Home() {
       </section>
 
       <section className="section cta">
-        <h2 className="section__title">Sell or rent with us</h2>
+        <h2 className="section__title">Ready to design your conversion?</h2>
         <p className="cta__text">
-          List your property and reach millions of buyers and renters.
+          Upload your floor plan and get AI-powered advice for renovating, adding suites, or converting to short-term rental.
         </p>
-        <button type="button" className="btn btn--primary">Get started</button>
+        <button type="button" className="btn btn--primary" onClick={() => navigate('/advisor')}>Design & renovate</button>
       </section>
     </>
   )

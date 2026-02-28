@@ -4,18 +4,27 @@ import type { Response } from 'express';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const SYSTEM_PROMPT = `You are a renovation and rental repurposing advisor. The user has shared a floor plan image. Use it to give specific, practical advice.
+const SYSTEM_PROMPT = `You are a design and renovation advisor focused on helping people convert or renovate their property. Many users want to convert a house to Airbnb/short-term rental, add a suite or in-law unit, or turn one property into multiple rental units. The user has shared a floor plan image. Give specific, practical advice tailored to their property type and goal.
 
-When you see the layout image (and in follow-up replies), cover:
-- **Renovation:** What to change (kitchen, bath, layout), in what order, and why.
-- **Repurposing for tenants:** Which rooms or areas could become a separate unit, ADU potential, layout changes for rentability. Mention that they should confirm zoning and local rules.
-- **Price/cost:** Ballpark ranges for the renovations you suggest (e.g. "typical kitchen refresh $X–Y"), with a clear caveat that these are estimates and they should get local quotes.
-- **Design:** Flow, finishes, and layout tips that fit their goal (e.g. durable finishes if renting out).
+Structure your first reply as follows:
+
+1. **Renovation plan (phases):** Start with a clear phased plan the user can follow. Use exactly this format so it can be shown as a timeline:
+   **Phase 1:** [One short line: e.g. "Permits & planning" or "Foundation work"]
+   **Phase 2:** [One short line: e.g. "Kitchen and bath updates"]
+   **Phase 3:** [One short line: e.g. "Layout and finishes"]
+   **Phase 4:** [One short line if needed: e.g. "Furnishing for rental"]
+   Use 3–4 phases. Each phase line should be one brief phrase or sentence. Then continue with full detail below.
+
+2. **Design & renovation:** What to change (kitchen, bath, layout, walls), in what order, and why. Adapt to their goal (e.g. Airbnb vs long-term tenant, adding a suite vs full conversion). Consider property type (condo vs single-family, HOA rules).
+3. **Conversions (Airbnb, suites, multi-unit):** Which rooms or areas could become a separate unit, suite, or listing; ADU potential; layout changes for short-term or long-term rentability. Mention that they must confirm zoning and local rules (e.g. short-term rental regulations).
+4. **Legal & permits:** If the user gave a location, mention how permits and zoning often work there. Briefly note what usually requires permits (structural, electrical, plumbing, adding units). Always add: "This is not legal advice; confirm with your local permitting office or a lawyer."
+5. **Cost:** Give ballpark ranges. Use this format when summarizing: "**Estimated cost:** $X,000–$Y,000 for [scope]" so the user can quickly see numbers. Add that these are estimates and they should get local quotes.
+6. **Design:** Flow, finishes, and layout tips that fit their goal (e.g. durable finishes if renting out).
 
 Be conversational, clear, and responsive to follow-up questions. If something is outside your expertise (e.g. structural or legal), say so and suggest they consult a professional.`;
 
 type Message = { role: 'user' | 'assistant'; content: string };
-type Session = { messages: Message[]; imageBase64: string | null };
+type Session = { messages: Message[]; imageBase64: string | null; propertyType?: string; location?: string };
 
 const sessions = new Map<string, Session>();
 
@@ -24,18 +33,20 @@ function normalizeImageUrl(image: string): string {
   return `data:image/jpeg;base64,${image}`;
 }
 
-function buildUserContentWithImage(imageBase64: string, text?: string): OpenAI.Chat.Completions.ChatCompletionContentPart[] {
+function buildUserContentWithImage(imageBase64: string, text?: string, propertyType?: string, location?: string): OpenAI.Chat.Completions.ChatCompletionContentPart[] {
   const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
     {
       type: 'image_url',
       image_url: { url: normalizeImageUrl(imageBase64) },
     },
   ];
-  if (text?.trim()) {
-    parts.push({ type: 'text', text: text.trim() });
-  } else {
-    parts.push({ type: 'text', text: "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, and design tips." });
-  }
+  const prefixParts: string[] = [];
+  if (location?.trim()) prefixParts.push(`Location: ${location.trim()}.`);
+  if (propertyType) prefixParts.push(`This is a ${propertyType}.`);
+  const prefix = prefixParts.length ? prefixParts.join(' ') + ' ' : '';
+  const defaultText = "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, permits to consider, and design tips. Tailor permits, zoning, and cost ballparks to my location when possible.";
+  const fullText = text?.trim() ? `${prefix}${text.trim()}` : `${prefix}${defaultText}`;
+  parts.push({ type: 'text', text: fullText });
   return parts;
 }
 
@@ -61,12 +72,13 @@ function sessionToMessages(session: Session): OpenAI.Chat.Completions.ChatComple
   return out;
 }
 
-export function createSession(imageBase64: string, firstMessage?: string): string {
+export function createSession(imageBase64: string, firstMessage?: string, propertyType?: string, location?: string): string {
   const sessionId = randomUUID();
-  const userText = firstMessage?.trim() || "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, and design tips.";
   sessions.set(sessionId, {
     messages: [],
     imageBase64,
+    propertyType: propertyType || undefined,
+    location: location?.trim() || undefined,
   });
   return sessionId;
 }
@@ -85,11 +97,18 @@ export async function streamFirstReply(
   sessionId: string,
   imageBase64: string,
   firstMessage: string | undefined,
-  res: Response
+  res: Response,
+  propertyType?: string,
+  location?: string
 ): Promise<string> {
   const session = sessions.get(sessionId)!;
-  const userContent = buildUserContentWithImage(imageBase64, firstMessage);
-  session.messages.push({ role: 'user', content: firstMessage?.trim() || "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, and design tips." });
+  const prefixParts: string[] = [];
+  if (location?.trim()) prefixParts.push(`Location: ${location.trim()}.`);
+  if (propertyType) prefixParts.push(`This is a ${propertyType}.`);
+  const prefix = prefixParts.length ? prefixParts.join(' ') + ' ' : '';
+  const userText = firstMessage?.trim() || "Here's my floor plan. Please analyze it and suggest renovations, how to repurpose for tenants, ballpark costs, permits to consider, and design tips. Tailor advice to my location when possible.";
+  session.messages.push({ role: 'user', content: `${prefix}${userText}` });
+  const userContent = buildUserContentWithImage(imageBase64, firstMessage || undefined, propertyType, location);
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
