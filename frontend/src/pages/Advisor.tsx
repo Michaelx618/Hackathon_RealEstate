@@ -3,6 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
+type ImageBatch = {
+  previews: string[]
+  encoded: string[]
+}
+
 function extractFirst(text: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern)
@@ -39,6 +44,7 @@ function readAsDataUrl(file: File): Promise<string> {
 const MAX_FILE_SIZE_MB = 10
 const MAX_IMAGE_DIMENSION = 1400
 const JPEG_QUALITY = 0.82
+const MAX_IMAGES_PER_BOX = 8
 
 function processImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -74,15 +80,35 @@ function processImage(file: File): Promise<string> {
   })
 }
 
+async function processImageFiles(files: File[], label: string): Promise<ImageBatch> {
+  const previews: string[] = []
+  const encoded: string[] = []
+
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) {
+      throw new Error(`${label} upload only accepts image files.`)
+    }
+    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      throw new Error(`${file.name} is over ${MAX_FILE_SIZE_MB} MB.`)
+    }
+
+    previews.push(await readAsDataUrl(file))
+    encoded.push(await processImage(file))
+  }
+
+  return { previews, encoded }
+}
+
 export default function Advisor() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
 
-  const [currentImagePreview, setCurrentImagePreview] = useState<string | null>(null)
-  const [currentImageBase64, setCurrentImageBase64] = useState<string | null>(null)
-  const [targetImagePreview, setTargetImagePreview] = useState<string | null>(null)
-  const [targetImageBase64, setTargetImageBase64] = useState<string | null>(null)
+  const [currentImagePreviews, setCurrentImagePreviews] = useState<string[]>([])
+  const [currentImagesBase64, setCurrentImagesBase64] = useState<string[]>([])
+  const [targetImagePreviews, setTargetImagePreviews] = useState<string[]>([])
+  const [targetImagesBase64, setTargetImagesBase64] = useState<string[]>([])
 
+  const [currentHouseStatus, setCurrentHouseStatus] = useState('')
   const [firstMessage, setFirstMessage] = useState('')
   const [location, setLocation] = useState('')
 
@@ -145,41 +171,49 @@ export default function Advisor() {
     { label: 'Simple Payback', value: payback },
   ].filter((item) => Boolean(item.value))
 
-  const handleCurrentImageFile = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setError('Current house photo must be an image file.')
+  const addCurrentImages = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return
+
+    const slotsLeft = MAX_IMAGES_PER_BOX - currentImagesBase64.length
+    if (slotsLeft <= 0) {
+      setError(`Current image box can store up to ${MAX_IMAGES_PER_BOX} images.`)
       return
     }
-    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      setError(`Current image must be under ${MAX_FILE_SIZE_MB} MB.`)
-      return
+
+    try {
+      const selected = Array.from(fileList).slice(0, slotsLeft)
+      const batch = await processImageFiles(selected, 'Current house')
+      setCurrentImagePreviews((prev) => [...prev, ...batch.previews])
+      setCurrentImagesBase64((prev) => [...prev, ...batch.encoded])
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to process current house images.')
     }
-    setError(null)
-    const preview = await readAsDataUrl(file)
-    const processed = await processImage(file)
-    setCurrentImagePreview(preview)
-    setCurrentImageBase64(processed)
   }
 
-  const handleTargetImageFile = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setError('Modified plan image must be an image file.')
+  const addTargetImages = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return
+
+    const slotsLeft = MAX_IMAGES_PER_BOX - targetImagesBase64.length
+    if (slotsLeft <= 0) {
+      setError(`Modified plan image box can store up to ${MAX_IMAGES_PER_BOX} images.`)
       return
     }
-    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      setError(`Modified image must be under ${MAX_FILE_SIZE_MB} MB.`)
-      return
+
+    try {
+      const selected = Array.from(fileList).slice(0, slotsLeft)
+      const batch = await processImageFiles(selected, 'Modified plan')
+      setTargetImagePreviews((prev) => [...prev, ...batch.previews])
+      setTargetImagesBase64((prev) => [...prev, ...batch.encoded])
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to process modified plan images.')
     }
-    setError(null)
-    const preview = await readAsDataUrl(file)
-    const processed = await processImage(file)
-    setTargetImagePreview(preview)
-    setTargetImageBase64(processed)
   }
 
   const startSession = async () => {
-    if (!currentImageBase64) {
-      setError('Please upload the current house photo first.')
+    if (currentImagesBase64.length === 0) {
+      setError('Please upload at least one current house photo first.')
       return
     }
     if (!firstMessage.trim()) {
@@ -196,9 +230,12 @@ export default function Advisor() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: currentImageBase64,
-          currentImage: currentImageBase64,
-          targetImage: targetImageBase64 || undefined,
+          image: currentImagesBase64[0],
+          currentImage: currentImagesBase64[0],
+          currentImages: currentImagesBase64,
+          targetImage: targetImagesBase64[0] || undefined,
+          targetImages: targetImagesBase64.length > 0 ? targetImagesBase64 : undefined,
+          currentHouseStatus: currentHouseStatus.trim() || undefined,
           firstMessage: firstMessage.trim() || undefined,
           propertyType: 'House / Townhouse',
           location: location.trim() || undefined,
@@ -217,8 +254,10 @@ export default function Advisor() {
       const sid = res.headers.get('X-Session-Id')
       if (sid) setSessionId(sid)
 
-      const userText = firstMessage.trim() || 'Estimate cost and return based on my current and target house plans.'
-      setMessages([{ role: 'user', content: `[House / Townhouse] ${userText}` }])
+      const header = `[House / Townhouse | Current images: ${currentImagesBase64.length} | Target images: ${targetImagesBase64.length}]`
+      const status = currentHouseStatus.trim() ? `Current status: ${currentHouseStatus.trim()}\n` : ''
+      const userText = `${status}Goal: ${firstMessage.trim()}`
+      setMessages([{ role: 'user', content: `${header}\n${userText}` }])
 
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
@@ -292,10 +331,11 @@ export default function Advisor() {
   const reset = () => {
     setSessionId(null)
     setMessages([])
-    setCurrentImagePreview(null)
-    setCurrentImageBase64(null)
-    setTargetImagePreview(null)
-    setTargetImageBase64(null)
+    setCurrentImagePreviews([])
+    setCurrentImagesBase64([])
+    setTargetImagePreviews([])
+    setTargetImagesBase64([])
+    setCurrentHouseStatus('')
     setFirstMessage('')
     setLocation('')
     setStreamingContent('')
@@ -308,7 +348,7 @@ export default function Advisor() {
     <div className="page page--advisor">
       <h1 className="page__title">House renovation cost + return advisor</h1>
       <p className="page__lead">
-        Upload two images only: one for your house right now, and one modified sketch/floor plan for your expected outcome.
+        Upload multiple images for your house right now and multiple images for the modified target outcome.
       </p>
       <p className="advisor-disclaimer">
         Scope is restricted to houses, townhouses, duplexes, and similar house-type properties. Condos and apartments are not supported.
@@ -318,9 +358,10 @@ export default function Advisor() {
         <section className="advisor-features" aria-label="How it works">
           <h2 className="advisor-features__title">Input requirements</h2>
           <ul className="advisor-features__list">
-            <li><strong>Box 1:</strong> current house photo or floor plan.</li>
-            <li><strong>Box 2:</strong> modified target sketch, rough drawing, or target floor plan.</li>
-            <li><strong>Box 3:</strong> description of your needs and expected outcome.</li>
+            <li><strong>Box 1:</strong> upload one or more current house photos/floor plans.</li>
+            <li><strong>Box 2:</strong> upload one or more modified target sketches/floor plans.</li>
+            <li><strong>Box 3:</strong> describe current house status.</li>
+            <li><strong>Box 4:</strong> describe your needs and expected outcome.</li>
           </ul>
           <div className="advisor-sources">
             <strong>Public data references:</strong>{' '}
@@ -337,7 +378,7 @@ export default function Advisor() {
 
       {!sessionId ? (
         <section className="advisor-upload">
-          <label className="advisor-upload__label">Current house photo (required)</label>
+          <label className="advisor-upload__label">Current house photos (upload multiple)</label>
           <div
             className="advisor-upload__zone"
             onClick={() => currentImageInputRef.current?.click()}
@@ -346,29 +387,36 @@ export default function Advisor() {
             onDrop={(e) => {
               e.preventDefault()
               e.currentTarget.classList.remove('advisor-upload__zone--drag')
-              const file = e.dataTransfer.files[0]
-              if (file) handleCurrentImageFile(file)
+              addCurrentImages(e.dataTransfer.files)
             }}
           >
             <input
               ref={currentImageInputRef}
               type="file"
               accept="image/*"
+              multiple
               onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) handleCurrentImageFile(file)
+                addCurrentImages(e.target.files)
+                e.currentTarget.value = ''
               }}
               className="advisor-upload__input"
-              aria-label="Upload current house photo"
+              aria-label="Upload current house photos"
             />
-            {currentImagePreview ? (
-              <img src={currentImagePreview} alt="Current house preview" className="advisor-upload__preview" />
+            {currentImagePreviews.length > 0 ? (
+              <>
+                <div className="advisor-upload__gallery">
+                  {currentImagePreviews.map((preview, idx) => (
+                    <img key={`${preview.slice(0, 30)}-${idx}`} src={preview} alt={`Current house ${idx + 1}`} className="advisor-upload__thumb" />
+                  ))}
+                </div>
+                <span className="advisor-upload__count">{currentImagePreviews.length} image(s) uploaded</span>
+              </>
             ) : (
-              <span className="advisor-upload__placeholder">Drop current house photo here or click to browse</span>
+              <span className="advisor-upload__placeholder">Drop current house photos here or click to browse</span>
             )}
           </div>
 
-          <label className="advisor-upload__label">Modified target image (optional)</label>
+          <label className="advisor-upload__label">Modified target images (upload multiple, optional)</label>
           <div
             className="advisor-upload__zone"
             onClick={() => targetImageInputRef.current?.click()}
@@ -377,27 +425,45 @@ export default function Advisor() {
             onDrop={(e) => {
               e.preventDefault()
               e.currentTarget.classList.remove('advisor-upload__zone--drag')
-              const file = e.dataTransfer.files[0]
-              if (file) handleTargetImageFile(file)
+              addTargetImages(e.dataTransfer.files)
             }}
           >
             <input
               ref={targetImageInputRef}
               type="file"
               accept="image/*"
+              multiple
               onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) handleTargetImageFile(file)
+                addTargetImages(e.target.files)
+                e.currentTarget.value = ''
               }}
               className="advisor-upload__input"
-              aria-label="Upload modified target image"
+              aria-label="Upload modified target images"
             />
-            {targetImagePreview ? (
-              <img src={targetImagePreview} alt="Modified target preview" className="advisor-upload__preview" />
+            {targetImagePreviews.length > 0 ? (
+              <>
+                <div className="advisor-upload__gallery">
+                  {targetImagePreviews.map((preview, idx) => (
+                    <img key={`${preview.slice(0, 30)}-${idx}`} src={preview} alt={`Target plan ${idx + 1}`} className="advisor-upload__thumb" />
+                  ))}
+                </div>
+                <span className="advisor-upload__count">{targetImagePreviews.length} image(s) uploaded</span>
+              </>
             ) : (
-              <span className="advisor-upload__placeholder">Drop modified sketch/floor plan here or click to browse</span>
+              <span className="advisor-upload__placeholder">Drop modified sketches/floor plans here or click to browse</span>
             )}
           </div>
+
+          <label className="advisor-upload__label">
+            Current house status (optional)
+            <textarea
+              value={currentHouseStatus}
+              onChange={(e) => setCurrentHouseStatus(e.target.value)}
+              placeholder="Describe the current condition (layout issues, old systems, damaged areas, etc.)."
+              className="advisor-chat__input"
+              rows={3}
+            />
+          </label>
 
           <label className="advisor-upload__label">
             Describe your needs and expected outcome (required)
@@ -415,7 +481,7 @@ export default function Advisor() {
             type="button"
             className="btn btn--primary"
             onClick={startSession}
-            disabled={!currentImageBase64 || loading}
+            disabled={currentImagesBase64.length === 0 || !firstMessage.trim() || loading}
           >
             {loading ? 'Calculating…' : 'Calculate project economics'}
           </button>

@@ -14,8 +14,9 @@ const SYSTEM_PROMPT = `You are a renovation, construction-cost, and rental-retur
 This platform is for house-type properties only (single-family house, townhouse, duplex, semi-detached, detached, rowhouse). Condo/apartment requests are out of scope and must be flagged.
 
 The owner may provide:
-- A current-state photo or floor plan image (required)
-- An optional target-outcome reference image (what they want to build)
+- One or more current-state photos/floor plan images (required)
+- One or more optional target-outcome reference images (what they want to build)
+- A current-house status note (what condition/issues exist now)
 - Optional supporting documents (land size, floor plans, PDFs, text notes)
 - Optional numeric area fields
 
@@ -70,8 +71,11 @@ export type AdvisorDocumentInput = {
 
 export type AdvisorSessionInput = {
   currentImage: string;
+  currentImages?: string[];
   targetImage?: string;
+  targetImages?: string[];
   firstMessage?: string;
+  currentHouseStatus?: string;
   propertyType?: string;
   location?: string;
   documentNotes?: string;
@@ -98,6 +102,8 @@ const sessions = new Map<string, Session>();
 const MAX_DOCS = 8;
 const MAX_DOC_IMAGE_COUNT = 4;
 const MAX_TEXT_CHARS_PER_DOC = 7000;
+const MAX_CURRENT_IMAGES_IN_PROMPT = 6;
+const MAX_TARGET_IMAGES_IN_PROMPT = 6;
 
 function normalizeImageUrl(image: string): string {
   if (image.startsWith('data:')) return image;
@@ -191,6 +197,7 @@ function buildContextText(context: AdvisorSessionInput, firstMessage?: string): 
 
   if (context.location?.trim()) lines.push(`Location: ${context.location.trim()}.`);
   if (context.propertyType?.trim()) lines.push(`Property type: ${context.propertyType.trim()}.`);
+  if (context.currentHouseStatus?.trim()) lines.push(`Current house status from owner: ${context.currentHouseStatus.trim()}`);
   if (context.renovationLevel?.trim()) lines.push(`Renovation level preference: ${context.renovationLevel.trim()}.`);
   if (typeof context.landAreaSqft === 'number') lines.push(`Land size from owner/docs: ${context.landAreaSqft.toLocaleString()} sqft.`);
   if (typeof context.interiorAreaSqft === 'number') lines.push(`Interior size from owner/docs: ${context.interiorAreaSqft.toLocaleString()} sqft.`);
@@ -213,8 +220,17 @@ async function buildInitialUserContent(
 
   const contextSections: string[] = [
     buildContextText(context, firstMessage),
-    'Image order: first image is current state/floor plan; second image (if present) is desired outcome reference.',
+    'Image order: all current-state images first, then all target-outcome images.',
   ];
+
+  const currentImages = (context.currentImages?.length ? context.currentImages : [context.currentImage]).slice(0, MAX_CURRENT_IMAGES_IN_PROMPT);
+  const targetImages = (context.targetImages?.length
+    ? context.targetImages
+    : (context.targetImage ? [context.targetImage] : [])
+  ).slice(0, MAX_TARGET_IMAGES_IN_PROMPT);
+
+  contextSections.push(`Current-state image count: ${currentImages.length}.`);
+  contextSections.push(`Target-outcome image count: ${targetImages.length}.`);
 
   if (docs.textBlocks.length > 0) {
     contextSections.push(`Supporting document excerpts:\n${docs.textBlocks.join('\n\n')}`);
@@ -225,11 +241,14 @@ async function buildInitialUserContent(
 
   const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
     { type: 'text', text: contextSections.join('\n\n') },
-    { type: 'image_url', image_url: { url: normalizeImageUrl(context.currentImage) } },
   ];
 
-  if (context.targetImage) {
-    parts.push({ type: 'image_url', image_url: { url: normalizeImageUrl(context.targetImage) } });
+  for (const image of currentImages) {
+    parts.push({ type: 'image_url', image_url: { url: normalizeImageUrl(image) } });
+  }
+
+  for (const image of targetImages) {
+    parts.push({ type: 'image_url', image_url: { url: normalizeImageUrl(image) } });
   }
 
   for (const docImageUrl of docs.imageDataUrls) {
@@ -239,6 +258,9 @@ async function buildInitialUserContent(
   const summaryLines: string[] = [];
   if (context.location?.trim()) summaryLines.push(`Location: ${context.location.trim()}`);
   if (context.propertyType?.trim()) summaryLines.push(`Property: ${context.propertyType.trim()}`);
+  if (context.currentHouseStatus?.trim()) summaryLines.push(`Current status noted`);
+  summaryLines.push(`Current images: ${currentImages.length}`);
+  summaryLines.push(`Target images: ${targetImages.length}`);
   if (typeof context.interiorAreaSqft === 'number') summaryLines.push(`Documented interior: ${context.interiorAreaSqft.toLocaleString()} sqft`);
   if (typeof context.landAreaSqft === 'number') summaryLines.push(`Land: ${context.landAreaSqft.toLocaleString()} sqft`);
   if (typeof context.desiredRentableSqft === 'number') summaryLines.push(`Target rentable: ${context.desiredRentableSqft.toLocaleString()} sqft`);
@@ -292,8 +314,14 @@ export function createSession(input: AdvisorSessionInput): string {
     context: {
       ...input,
       currentImage: input.currentImage,
+      currentImages: (input.currentImages?.length ? input.currentImages : [input.currentImage]).slice(0, MAX_CURRENT_IMAGES_IN_PROMPT),
       targetImage: input.targetImage,
+      targetImages: (input.targetImages?.length
+        ? input.targetImages
+        : (input.targetImage ? [input.targetImage] : [])
+      ).slice(0, MAX_TARGET_IMAGES_IN_PROMPT),
       firstMessage: input.firstMessage,
+      currentHouseStatus: input.currentHouseStatus,
       propertyType: input.propertyType,
       location: input.location?.trim() || undefined,
       documentNotes: input.documentNotes,

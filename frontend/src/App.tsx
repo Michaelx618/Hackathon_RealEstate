@@ -6,6 +6,7 @@ import ListingDetail from './pages/ListingDetail'
 import About from './pages/About'
 import Contact from './pages/Contact'
 import Advisor from './pages/Advisor'
+import FurnishingPreview from './pages/FurnishingPreview'
 import NotFound from './pages/NotFound'
 import './App.css'
 
@@ -20,6 +21,7 @@ function App() {
             <Route path="/listings" element={<Listings />} />
             <Route path="/listings/:id" element={<ListingDetail />} />
             <Route path="/advisor" element={<Advisor />} />
+            <Route path="/furnish-preview" element={<FurnishingPreview />} />
             <Route path="/about" element={<About />} />
             <Route path="/contact" element={<Contact />} />
             <Route path="*" element={<NotFound />} />

@@ -42,6 +42,7 @@ export default function Navbar() {
         <li><Link to="/">Home</Link></li>
         <li><Link to="/listings">Listings</Link></li>
         <li><Link to="/advisor">Design & renovate</Link></li>
+        <li><Link to="/furnish-preview">Furniture preview</Link></li>
         <li><Link to="/about">About</Link></li>
         <li><Link to="/contact">Contact</Link></li>
       </ul>
