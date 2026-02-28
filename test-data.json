@@ -33,7 +33,19 @@
     "floorPlans": [
       { "label": "Sample floor plan (Wikimedia)", "path": "test-data/images/sample-floorplan.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Sample_Floorplan.jpg" },
       { "label": "House floor plan (Wikimedia)", "path": "test-data/images/floor-plan-1.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/1/18/Floor_plan_1.jpg" },
-      { "label": "Brentmore plan (Wikimedia)", "path": "test-data/images/brentmore-plan.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/3/30/Typical_floor_plan_of_the_Brentmore_%28NYPL_b11389518-417244%29.jpg" }
+      { "label": "Brentmore plan (Wikimedia)", "path": "test-data/images/brentmore-plan.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/3/30/Typical_floor_plan_of_the_Brentmore_%28NYPL_b11389518-417244%29.jpg" },
+      { "label": "Cambridge Cottage", "path": "test-data/images/plan-cambridge-cottage.jpg" },
+      { "label": "House at Radlett", "path": "test-data/images/plan-radlett.jpg" },
+      { "label": "Putnam House", "path": "test-data/images/plan-putnam.jpg" },
+      { "label": "Walker Guest House (Paul Rudolph)", "path": "test-data/images/plan-walker-guest.jpg" },
+      { "label": "Harris Homes 1920", "path": "test-data/images/plan-harris-1920.jpg" },
+      { "label": "54 Queen Street", "path": "test-data/images/plan-queen-st.jpg" },
+      { "label": "Paris Tour-des-Dames plan", "path": "test-data/images/plan-paris-tour.jpg" },
+      { "label": "Holland House (John Thorpe 1605)", "path": "test-data/images/plan-holland-house.png" },
+      { "label": "Bolduc House Ste Genevieve", "path": "test-data/images/plan-bolduc.png" },
+      { "label": "178 Central St Somerville", "path": "test-data/images/plan-somerville.png" },
+      { "label": "2 BHK Bungalow", "path": "test-data/images/plan-bungalow-2bhk.jpg" },
+      { "label": "Boardman House", "path": "test-data/images/plan-boardman.jpg" }
     ],
     "housePhoto": { "path": "test-data/images/house-photo.jpg", "url": "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=400" }
   }
