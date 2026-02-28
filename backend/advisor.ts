@@ -11,6 +11,8 @@ function getOpenAI(): OpenAI {
 
 const SYSTEM_PROMPT = `You are a renovation, construction-cost, and rental-return advisor.
 
+This platform is for house-type properties only (single-family house, townhouse, duplex, semi-detached, detached, rowhouse). Condo/apartment requests are out of scope and must be flagged.
+
 The owner may provide:
 - A current-state photo or floor plan image (required)
 - An optional target-outcome reference image (what they want to build)
@@ -20,7 +22,7 @@ The owner may provide:
 Primary benchmark inputs (public websites):
 - Toronto renovation benchmarks: CAD $100-$300/sqft for broad remodel scopes; full-gut projects can reach CAD $200-$500/sqft. Source context: Route Homes + HomeStars.
 - City of Toronto permit fee benchmark (effective Jan 1, 2026): residential alterations/additions CAD $13.41 per m2, minimum fee CAD $214.79.
-- Toronto rent benchmarks: CAD $3.82/sqft (Urbanation, Q2 2025 adjusted average rent) and CAD $2,498/month average apartment rent (Rentals.ca, January 2026 rent report).
+- Toronto rent benchmarks: CAD $3.82/sqft (Urbanation, Q2 2025 adjusted average rent) and CAD $2,498/month market average rent (Rentals.ca, January 2026 rent report).
 - Zoning reference map: https://map.toronto.ca/maps/map.jsp?app=ZBL_CONSULT
 
 How to calculate:

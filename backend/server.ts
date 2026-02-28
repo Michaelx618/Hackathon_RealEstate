@@ -49,6 +49,11 @@ function sanitizeSupportingDocs(value: unknown): AdvisorDocumentInput[] {
   return docs;
 }
 
+function isUnsupportedPropertyType(value: string | undefined): boolean {
+  if (!value) return false;
+  return /(condo|apartment)/i.test(value);
+}
+
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'API is running' });
 });
@@ -72,11 +77,16 @@ app.post('/api/advisor/session', async (req: Request, res: Response) => {
     }
 
     const firstMessage = optionalString(body.firstMessage);
+    const requestedPropertyType = optionalString(body.propertyType);
+    if (isUnsupportedPropertyType(requestedPropertyType)) {
+      res.status(400).json({ error: 'Only house-type properties are supported right now (no condo/apartment).' });
+      return;
+    }
     const sessionInput: AdvisorSessionInput = {
       currentImage,
       targetImage: optionalString(body.targetImage),
       firstMessage,
-      propertyType: optionalString(body.propertyType),
+      propertyType: requestedPropertyType || 'House / Townhouse',
       location: optionalString(body.location),
       documentNotes: optionalString(body.documentNotes),
       supportingDocs: sanitizeSupportingDocs(body.supportingDocs),

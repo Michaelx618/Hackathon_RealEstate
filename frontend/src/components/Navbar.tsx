@@ -7,7 +7,9 @@ export default function Navbar() {
     try {
       const saved = localStorage.getItem('theme')
       if (saved) return saved
-    } catch (e) {}
+    } catch {
+      // Ignore localStorage access issues (private mode, SSR, or blocked storage).
+    }
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
       return 'dark'
     }
@@ -17,7 +19,9 @@ export default function Navbar() {
   useEffect(() => {
     if (theme === 'dark') document.documentElement.classList.add('dark')
     else document.documentElement.classList.remove('dark')
-    try { localStorage.setItem('theme', theme) } catch (e) {}
+    try { localStorage.setItem('theme', theme) } catch {
+      // Ignore localStorage write issues; theme still works for current session.
+    }
   }, [theme])
 
   const ref = useRef<HTMLDivElement | null>(null)
