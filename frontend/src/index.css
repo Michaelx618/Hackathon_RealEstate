@@ -8,8 +8,8 @@
   -moz-osx-font-smoothing: grayscale;
 
   /* Real estate palette */
-  --primary: #0d9488;
-  --primary-dark: #0f766e;
+  --primary: #6366f1; /* indigo-500 */
+  --primary-dark: #4f46e5; /* indigo-600 */
   --text: #1f2937;
   --muted-text: #6b7280;
   --bg: #fafafa;
@@ -22,10 +22,10 @@
   --input-text: #1f2937;
   --input-placeholder: #9ca3af;
 
-  /* Hero (teal gradient) */
-  --hero-from: #0d9488;
-  --hero-to: #0f766e;
-  --hero-text: #ffffff;
+  /* Hero (blue / indigo gradient) */
+  --hero-from: #4f46e5; /* indigo-600 */
+  --hero-to: #3b82f6; /* blue-500 */
+  --hero-text: #f9fafb;
 }
 
 * {
