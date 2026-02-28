@@ -26,6 +26,12 @@ export const listings: Listing[] = [
   { id: 10, address: '1800 Divisadero St', city: 'San Francisco', state: 'CA', zip: '94115', price: 4_500, beds: 3, baths: 2, sqft: 1400, type: 'rent', image: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=400&h=300&fit=crop', description: 'Top-floor flat with lots of light.' },
   { id: 11, address: '789 Castro St', city: 'San Francisco', state: 'CA', zip: '94114', price: 1_399_000, beds: 3, baths: 2, sqft: 1850, type: 'sale', image: 'https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?w=400&h=300&fit=crop', description: 'Walk to shops and transit. Turn-key condition.' },
   { id: 12, address: '4100 MacArthur Blvd', city: 'Oakland', state: 'CA', zip: '94619', price: 2_100, beds: 3, baths: 2, sqft: 1350, type: 'rent', image: 'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=400&h=300&fit=crop', description: 'Quiet hills location with parking.' },
+  // Toronto listings for testing advisor/furnishing with Toronto location
+  { id: 13, address: '100 Queen St W', city: 'Toronto', state: 'ON', zip: 'M5H 2N2', price: 1_850_000, beds: 3, baths: 2, sqft: 1800, type: 'sale', image: 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=400&h=300&fit=crop', description: 'Downtown condo steps from City Hall.' },
+  { id: 14, address: '350 Bloor St E', city: 'Toronto', state: 'ON', zip: 'M4W 1J4', price: 3_200, beds: 2, baths: 2, sqft: 1100, type: 'rent', image: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=400&h=300&fit=crop', description: 'Yonge & Bloor area, subway nearby.' },
+  { id: 15, address: '1 King St W', city: 'Toronto', state: 'ON', zip: 'M5H 1A1', price: 2_400_000, beds: 4, baths: 3, sqft: 2600, type: 'sale', image: 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=400&h=300&fit=crop', description: 'Financial District tower with lake views.' },
+  { id: 16, address: '55 Harbour Sq', city: 'Toronto', state: 'ON', zip: 'M5J 2L1', price: 2_900, beds: 2, baths: 2, sqft: 1200, type: 'rent', image: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=400&h=300&fit=crop', description: 'Harbourfront living, walk to water.' },
+  { id: 17, address: '200 Front St W', city: 'Toronto', state: 'ON', zip: 'M5V 3W2', price: 1_100_000, beds: 2, baths: 2, sqft: 950, type: 'sale', image: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=400&h=300&fit=crop', description: 'Entertainment District, CN Tower views.' },
 ]
 
 export function getFeaturedListings(): Listing[] {

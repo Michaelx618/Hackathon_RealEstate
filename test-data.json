@@ -23,6 +23,25 @@
     "123 Main St, Portland OR",
     "456 Oak Ave, Denver CO 80202"
   ],
+  "addressesToronto": [
+    "100 Queen St W, Toronto, ON M5H 2N2",
+    "350 Bloor St E, Toronto, ON M4W 1J4",
+    "1 King St W, Toronto, ON M5H 1A1",
+    "55 Harbour Sq, Toronto, ON M5J 2L1",
+    "200 Front St W, Toronto, ON M5V 3W2",
+    "500 Parliament St, Toronto, ON M4X 1P3",
+    "88 Harbour St, Toronto, ON M5J 2T6",
+    "75 The Esplanade, Toronto, ON M5E 1Z2",
+    "Toronto, ON",
+    "Toronto, ON M5V 1A1",
+    "123 King St E, Toronto ON M5A 1A1"
+  ],
+  "torontoConversionTestCases": [
+    { "address": "100 Queen St W, Toronto, ON M5H 2N2", "floorPlanLabel": "Sample floor plan (Wikimedia)", "floorPlanUrl": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Sample_Floorplan.jpg" },
+    { "address": "350 Bloor St E, Toronto, ON M4W 1J4", "floorPlanLabel": "House floor plan (Wikimedia)", "floorPlanUrl": "https://upload.wikimedia.org/wikipedia/commons/1/18/Floor_plan_1.jpg" },
+    { "address": "1 King St W, Toronto, ON M5H 1A1", "floorPlanLabel": "Brentmore plan (Wikimedia)", "floorPlanUrl": "https://upload.wikimedia.org/wikipedia/commons/3/30/Typical_floor_plan_of_the_Brentmore_%28NYPL_b11389518-417244%29.jpg" },
+    { "address": "Toronto, ON", "floorPlanLabel": "Sample floor plan (Wikimedia)", "floorPlanUrl": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Sample_Floorplan.jpg" }
+  ],
   "floorPlanLinks": [
     { "label": "Sample floor plan (Wikimedia)", "url": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Sample_Floorplan.jpg" },
     { "label": "House floor plan (Wikimedia)", "url": "https://upload.wikimedia.org/wikipedia/commons/1/18/Floor_plan_1.jpg" },

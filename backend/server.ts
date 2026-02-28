@@ -295,6 +295,11 @@ app.post('/api/advisor/session', async (req: Request, res: Response) => {
     const fallbackTargetImage = optionalString(body.targetImage);
 
     const firstMessage = optionalString(body.firstMessage);
+    const location = optionalString(body.location);
+    if (!location) {
+      res.status(400).json({ error: 'Missing property address/location (required for localized pricing).' });
+      return;
+    }
     const requestedPropertyType = optionalString(body.propertyType);
     if (isUnsupportedPropertyType(requestedPropertyType)) {
       res.status(400).json({ error: 'Only house-type properties are supported right now (no condo/apartment).' });
@@ -310,7 +315,7 @@ app.post('/api/advisor/session', async (req: Request, res: Response) => {
       firstMessage,
       currentHouseStatus: optionalString(body.currentHouseStatus),
       propertyType: requestedPropertyType || 'House / Townhouse',
-      location: optionalString(body.location),
+      location,
       documentNotes: optionalString(body.documentNotes),
       supportingDocs: sanitizeSupportingDocs(body.supportingDocs),
       landAreaSqft: optionalNumber(body.landAreaSqft),
