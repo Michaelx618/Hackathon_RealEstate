@@ -367,8 +367,8 @@ export default function Advisor() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         const msg = data?.error as string | undefined
-        if (res.status === 503 && (msg?.includes('OPENAI_API_KEY') || msg?.includes('not configured'))) {
-          throw new Error('The advisor is not configured yet (OPENAI_API_KEY missing).')
+        if (res.status === 503 && (msg?.includes('GEMINI_API_KEY') || msg?.includes('not configured'))) {
+          throw new Error('The advisor is not configured yet (GEMINI_API_KEY missing).')
         }
         throw new Error(msg || `Request failed: ${res.status}`)
       }
@@ -428,8 +428,8 @@ export default function Advisor() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         const msg = data?.error as string | undefined
-        if (res.status === 503 && (msg?.includes('OPENAI_API_KEY') || msg?.includes('not configured'))) {
-          throw new Error('The advisor is not configured yet (OPENAI_API_KEY missing).')
+        if (res.status === 503 && (msg?.includes('GEMINI_API_KEY') || msg?.includes('not configured'))) {
+          throw new Error('The advisor is not configured yet (GEMINI_API_KEY missing).')
         }
         throw new Error(msg || `Request failed: ${res.status}`)
       }

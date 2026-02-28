@@ -1,12 +1,7 @@
 // @ts-nocheck
 import { randomUUID } from 'crypto';
 import OpenAI, { toFile } from 'openai';
-function getOpenAI() {
-    const key = process.env.OPENAI_API_KEY;
-    if (!key)
-        throw new Error('OPENAI_API_KEY is not set');
-    return new OpenAI({ apiKey: key });
-}
+import { generateGeminiEditedImage, getGeminiChatModel, getGeminiClient } from './ai-client.js';
 const sessions = new Map();
 const MAX_SLOT_COUNT = 8;
 const MAX_OPTIONS_PER_SLOT = 4;
@@ -40,6 +35,9 @@ Rules:
 - quantity must be integer >= 1.
 - category should be short (e.g. sofa, bed, table, chair, storage, lighting, appliance, decor, other).
 - If user provides a specific product URL, put it in preferredLink for the closest slot.
+- Do NOT collapse explicit requests into a generic bundle like "furniture set" when user listed distinct items.
+- When user lists multiple items (comma-separated or joined with "and"), return one slot per item.
+- Keep item intent faithful (e.g. "L-shape gray sofa", "oak coffee table", "TV console", "floor lamp", "65-inch TV").
 - assistantMessage should briefly confirm what changed and what will be shown next.
 - No markdown. No prose outside JSON.`;
 const ROOM_PROFILE_PROMPT = `Estimate room dimensions for furnishing fit checks.
@@ -277,6 +275,171 @@ function parsePlannerSlots(raw) {
         });
     }
     return slots;
+}
+function normalizeSlotCategory(raw) {
+    const text = (optionalString(raw) || '').toLowerCase();
+    if (/(sofa|couch|sectional)/.test(text))
+        return 'sofa';
+    if (/(coffee table|table)/.test(text))
+        return 'table';
+    if (/(tv console|media|storage|cabinet|console|stand|bench)/.test(text))
+        return 'storage';
+    if (/(lamp|lighting)/.test(text))
+        return 'lighting';
+    if (/(tv|television|appliance)/.test(text))
+        return 'appliance';
+    if (/(bed|mattress)/.test(text))
+        return 'bed';
+    return text || 'other';
+}
+function slotLooksGeneric(slot) {
+    const label = `${slot.label || ''} ${slot.searchQuery || ''}`.toLowerCase();
+    if (/(furniture set|primary furniture|full set|bundle|package|room set|modern furniture set)/.test(label)) {
+        return true;
+    }
+    return false;
+}
+function hasSimilarRequestedSlot(existingSlots, requested) {
+    const reqCategory = normalizeSlotCategory(requested.category || requested.label || requested.searchQuery);
+    const reqLabel = slugify(requested.label || requested.searchQuery || '');
+    for (const slot of existingSlots) {
+        const slotCategory = normalizeSlotCategory(slot.category || slot.label || slot.searchQuery);
+        if (slotCategory !== reqCategory)
+            continue;
+        const slotLabel = slugify(slot.label || slot.searchQuery || '');
+        if (slotLabel === reqLabel)
+            return true;
+        if (slotLabel.includes(reqLabel) || reqLabel.includes(slotLabel))
+            return true;
+    }
+    return false;
+}
+function parseExplicitQuantity(text, phrases) {
+    for (const phrase of phrases) {
+        const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+        const before = text.match(new RegExp(`\\b(\\d+)\\s+${escaped}\\b`, 'i'));
+        if (before?.[1]) {
+            const value = Number(before[1]);
+            if (Number.isFinite(value) && value > 0)
+                return Math.min(20, Math.round(value));
+        }
+        const after = text.match(new RegExp(`\\b${escaped}\\s*x\\s*(\\d+)\\b`, 'i'));
+        if (after?.[1]) {
+            const value = Number(after[1]);
+            if (Number.isFinite(value) && value > 0)
+                return Math.min(20, Math.round(value));
+        }
+    }
+    return 1;
+}
+function extractRuleBasedSlots(message, links) {
+    const text = optionalString(message);
+    if (!text)
+        return [];
+    const lowered = text.toLowerCase();
+    const slots = [];
+    const linkQueue = [...links];
+    const pushSlot = (slot) => {
+        if (slots.length >= MAX_SLOT_COUNT)
+            return;
+        if (!slot.label || !slot.searchQuery)
+            return;
+        slots.push({
+            ...slot,
+            quantity: Math.max(1, Math.min(20, Math.round(slot.quantity || 1))),
+            preferredLink: slot.preferredLink || linkQueue.shift(),
+        });
+    };
+    const tvSizeMatch = lowered.match(/\b(\d{2,3})\s*(?:-|\s)?(?:inch|in|")\s*tv\b/i);
+    const tvSize = tvSizeMatch?.[1];
+    const hasLShape = /\bl[\s-]?shape(?:d)?\b|\bsectional\b/.test(lowered);
+    const hasGray = /\b(gray|grey|charcoal)\b/.test(lowered);
+    const hasOak = /\boak\b/.test(lowered);
+    if (/\b(sofa|couch|sectional)\b/.test(lowered)) {
+        const queryParts = [];
+        if (hasLShape)
+            queryParts.push('L-shape');
+        if (hasGray)
+            queryParts.push('gray');
+        queryParts.push('sofa');
+        pushSlot({
+            label: `${hasLShape ? 'L-shape ' : ''}${hasGray ? 'Gray ' : ''}Sofa`.trim(),
+            category: 'sofa',
+            searchQuery: queryParts.join(' '),
+            quantity: parseExplicitQuantity(text, ['sofa', 'sectional', 'couch']),
+            constraints: hasLShape ? 'L-shape / sectional preferred.' : undefined,
+        });
+    }
+    if (/\bcoffee\s+table\b/.test(lowered)) {
+        pushSlot({
+            label: `${hasOak ? 'Oak ' : ''}Coffee Table`.trim(),
+            category: 'table',
+            searchQuery: `${hasOak ? 'oak ' : ''}coffee table`.trim(),
+            quantity: parseExplicitQuantity(text, ['coffee table']),
+        });
+    }
+    if (/\b(tv|television)\s*(console|stand|bench|unit)\b|\b(media)\s*(console|stand|unit)\b/.test(lowered)) {
+        const sizeHint = tvSize ? `${tvSize} inch ` : '';
+        pushSlot({
+            label: 'TV Console',
+            category: 'storage',
+            searchQuery: `${sizeHint}tv console`.trim(),
+            quantity: parseExplicitQuantity(text, ['tv console', 'tv stand', 'media console', 'media unit']),
+            constraints: tvSize ? `Should support approximately ${tvSize}-inch TV.` : undefined,
+        });
+    }
+    if (/\bfloor\s+lamp\b|\bstanding\s+lamp\b/.test(lowered)) {
+        pushSlot({
+            label: 'Floor Lamp',
+            category: 'lighting',
+            searchQuery: 'floor lamp',
+            quantity: parseExplicitQuantity(text, ['floor lamp', 'standing lamp']),
+        });
+    }
+    const hasTvRequest = Boolean(tvSize)
+        || (/\b(tv|television)\b/.test(lowered)
+            && !/\b(tv|television)\s*(console|stand|bench|unit)\b/.test(lowered));
+    if (hasTvRequest) {
+        pushSlot({
+            label: `${tvSize ? `${tvSize}-inch ` : ''}TV`.trim(),
+            category: 'appliance',
+            searchQuery: `${tvSize ? `${tvSize} inch ` : ''}tv`.trim(),
+            quantity: parseExplicitQuantity(text, ['tv', 'television']),
+            constraints: tvSize ? `${tvSize}-inch size requested.` : undefined,
+        });
+    }
+    if (slots.length === 0)
+        return [];
+    const deduped = [];
+    const seen = new Set();
+    for (const slot of slots) {
+        const key = `${normalizeSlotCategory(slot.category)}:${slugify(slot.label || slot.searchQuery)}`;
+        if (seen.has(key))
+            continue;
+        seen.add(key);
+        deduped.push(slot);
+    }
+    return deduped.slice(0, MAX_SLOT_COUNT);
+}
+function mergePlannerWithRuleBasedSlots(plannerSlots, ruleSlots, latestMessage) {
+    if (ruleSlots.length === 0)
+        return plannerSlots;
+    const messageLooksLikeList = /,| and |\bwith\b/i.test((latestMessage || '').toLowerCase());
+    const genericPlanner = plannerSlots.length === 0
+        || plannerSlots.every((slot) => slotLooksGeneric(slot))
+        || (plannerSlots.some((slot) => slotLooksGeneric(slot)) && plannerSlots.length <= 2);
+    if (genericPlanner || plannerSlots.length < ruleSlots.length || messageLooksLikeList) {
+        return ruleSlots.slice(0, MAX_SLOT_COUNT);
+    }
+    const merged = [...plannerSlots];
+    for (const rule of ruleSlots) {
+        if (hasSimilarRequestedSlot(merged, rule))
+            continue;
+        merged.push(rule);
+        if (merged.length >= MAX_SLOT_COUNT)
+            break;
+    }
+    return merged.slice(0, MAX_SLOT_COUNT);
 }
 function parseIkeaPrice(value) {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -634,8 +797,8 @@ async function planDesiredSlots(session, message, links) {
         existingSlotsText,
         'Return JSON only.',
     ].join('\n\n');
-    const completion = await getOpenAI().chat.completions.create({
-        model: 'gpt-4o',
+    const completion = await getGeminiClient().chat.completions.create({
+        model: getGeminiChatModel(),
         temperature: 0.2,
         max_tokens: 900,
         response_format: { type: 'json_object' },
@@ -646,12 +809,14 @@ async function planDesiredSlots(session, message, links) {
     });
     const raw = completion.choices[0]?.message?.content || '{}';
     const parsed = safeJsonParse(raw);
-    let slots = parsePlannerSlots(parsed.slots);
+    const plannerSlots = parsePlannerSlots(parsed.slots);
+    const ruleSlots = extractRuleBasedSlots(message, links);
+    let slots = mergePlannerWithRuleBasedSlots(plannerSlots, ruleSlots, message);
     if (slots.length === 0) {
         slots = [{
-                label: 'Primary furniture set',
-                category: 'furniture',
-                searchQuery: 'modern furniture set',
+                label: 'Living room sofa',
+                category: 'sofa',
+                searchQuery: 'gray sofa',
                 quantity: 1,
             }];
     }
@@ -731,6 +896,28 @@ function dedupeOptions(options) {
     }
     return [...map.values()];
 }
+function buildIkeaSearchFallbackOption(slot, market) {
+    return {
+        optionId: `fallback-${slugify(slot.label || slot.searchQuery)}-${makeHash(slot.searchQuery || slot.label || 'item')}`,
+        source: 'ikea',
+        name: `${slot.label} (IKEA search)`,
+        url: getIkeaSearchReferer(market, slot.searchQuery || slot.label || 'furniture'),
+        unitPrice: null,
+        currency: market.currency,
+        dimensionsText: undefined,
+    };
+}
+function buildNoDirectMatchOption(slot, market, reason) {
+    return {
+        optionId: `no-match-${slugify(slot.label || slot.searchQuery)}-${makeHash(slot.searchQuery || slot.label || 'item')}`,
+        source: 'ikea',
+        name: `${slot.label} (${reason})`,
+        url: getIkeaSearchReferer(market, slot.searchQuery || slot.label || 'furniture'),
+        unitPrice: null,
+        currency: market.currency,
+        dimensionsText: undefined,
+    };
+}
 async function buildSlotOptions(slot, market, cache) {
     const options = [];
     if (slot.preferredLink) {
@@ -743,7 +930,24 @@ async function buildSlotOptions(slot, market, cache) {
     const enrichedSearch = await Promise.all(topSearchOptions.map((option) => enrichIkeaOption(option, market, cache).catch(() => option)));
     options.push(...enrichedSearch);
     const deduped = dedupeOptions(options);
-    return deduped.slice(0, MAX_OPTIONS_PER_SLOT);
+    const top = deduped.slice(0, MAX_OPTIONS_PER_SLOT);
+    const normalizedCategory = normalizeSlotCategory(slot.category || slot.label || slot.searchQuery);
+    if (normalizedCategory === 'appliance' && /\btv\b/i.test(slot.searchQuery || slot.label || '')) {
+        const likelyTelevision = top.filter((option) => {
+            const name = (option.name || '').toLowerCase();
+            if (!/\b(tv|television|smart)\b/.test(name))
+                return false;
+            if (/\b(unit|stand|bench|console|cabinet|storage)\b/.test(name))
+                return false;
+            return true;
+        });
+        if (likelyTelevision.length === 0) {
+            return [buildNoDirectMatchOption(slot, market, 'No direct IKEA TV match; add a product link')];
+        }
+    }
+    if (top.length > 0)
+        return top;
+    return [buildIkeaSearchFallbackOption(slot, market)];
 }
 async function updateSlotsFromDesired(session, desiredSlots) {
     const prevSelectionBySlotKey = new Map();
@@ -838,8 +1042,8 @@ async function estimateRoomProfile(session) {
                 image_url: { url: normalizeImageDataUrl(session.context.floorPlanImage) },
             });
         }
-        const completion = await getOpenAI().chat.completions.create({
-            model: 'gpt-4o',
+        const completion = await getGeminiClient().chat.completions.create({
+            model: getGeminiChatModel(),
             temperature: 0.2,
             max_tokens: 450,
             response_format: { type: 'json_object' },
@@ -974,21 +1178,6 @@ async function generatePreviewImage(session, selectedItems, spacing) {
         notes.push('No selected items yet, preview not rendered.');
         return { notes };
     }
-    const roomFile = await toImageFileFromDataUrl(session.context.roomImage, 'room.jpg');
-    const files = [roomFile];
-    const references = selectedItems
-        .filter((item) => item.imageUrl)
-        .slice(0, MAX_REFERENCE_IMAGES_FOR_RENDER);
-    for (const [idx, item] of references.entries()) {
-        const imageUrl = item.imageUrl;
-        if (!imageUrl)
-            continue;
-        const fetched = await fetchImageAsFile(imageUrl, `reference-${idx + 1}`);
-        if (fetched.file)
-            files.push(fetched.file);
-        else if (fetched.error)
-            notes.push(fetched.error);
-    }
     const selectedList = selectedItems.map((item, index) => {
         const size = item.dimensionsText
             || ((item.widthCm && item.depthCm)
@@ -1004,34 +1193,30 @@ async function generatePreviewImage(session, selectedItems, spacing) {
         'If everything cannot fit, prioritize main seating/bed/storage items first while keeping a believable design.',
     ].join('\n\n');
     try {
-        const generated = await getOpenAI().images.edit({
-            model: 'gpt-image-1',
-            image: files,
+        const previewImageDataUrl = await generateGeminiEditedImage({
             prompt,
-            size: '1536x1024',
-            quality: 'medium',
-            output_format: 'png',
+            baseImageDataUrl: session.context.roomImage,
+            referenceImageDataUrls: session.context.floorPlanImage ? [session.context.floorPlanImage] : [],
         });
-        const first = generated.data?.[0];
-        if (first?.b64_json) {
-            return { previewImageDataUrl: `data:image/png;base64,${first.b64_json}`, notes };
-        }
-        if (first?.url) {
-            const fetched = await fetchWithTimeout(first.url, undefined, 12000);
-            if (fetched.ok) {
-                const contentType = fetched.headers.get('content-type')?.split(';')[0] || 'image/png';
-                const buffer = Buffer.from(await fetched.arrayBuffer());
-                return {
-                    previewImageDataUrl: `data:${contentType};base64,${buffer.toString('base64')}`,
-                    notes,
-                };
-            }
-        }
-        notes.push('Image generation completed but no image payload was returned.');
-        return { notes };
+        return { previewImageDataUrl, notes };
     }
     catch (error) {
-        notes.push(`Image generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        const status = typeof error === 'object' && error && 'status' in error
+            ? Number(error.status)
+            : undefined;
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        if (status === 429 || /quota|resource_exhausted/i.test(message)) {
+            notes.push('Image preview unavailable: Gemini image quota is exceeded (HTTP 429). Enable billing or retry after quota reset.');
+        }
+        else if (status === 403) {
+            notes.push('Image preview unavailable: Gemini image generation is not permitted for this API key/project.');
+        }
+        else if (status === 404 || /not found|not supported for predict/i.test(message)) {
+            notes.push('Image preview unavailable: selected GEMINI_IMAGE_MODEL does not support image editing. Use gemini-3-pro-image-preview (Nano Banana Pro).');
+        }
+        else {
+            notes.push(`Image generation failed: ${message}`);
+        }
         return { notes };
     }
 }

@@ -1,10 +1,9 @@
 import OpenAI, { toFile } from 'openai';
-
-function getOpenAI(): OpenAI {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error('OPENAI_API_KEY is not set');
-  return new OpenAI({ apiKey: key });
-}
+import {
+  getGeminiChatModel,
+  getGeminiClient,
+  getGeminiImageModel,
+} from './ai-client.js';
 
 const MAX_PRODUCT_LINKS = 8;
 const MAX_REFERENCES_FOR_IMAGE_EDIT = 4;
@@ -563,8 +562,8 @@ async function buildPlannerOutput(
     'Return JSON only.',
   ].join('\n\n');
 
-  const completion = await getOpenAI().chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getGeminiClient().chat.completions.create({
+    model: getGeminiChatModel(),
     response_format: { type: 'json_object' },
     temperature: 0.2,
     max_tokens: 1300,
@@ -741,28 +740,15 @@ async function generatePreviewImage(
   snapshots: ProductLinkSnapshot[],
 ): Promise<{ previewImageDataUrl?: string; notes: string[] }> {
   const notes: string[] = [];
-
-  const roomFile = await toImageFileFromDataUrl(roomImage, 'room.jpg');
-  const images: File[] = [roomFile];
-
-  for (const snapshot of snapshots.slice(0, MAX_REFERENCES_FOR_IMAGE_EDIT)) {
-    if (!snapshot.imageUrl) continue;
-    const fetched = await fetchImageAsFile(snapshot.imageUrl, 'product-reference');
-    if (fetched.file) {
-      images.push(fetched.file);
-    } else if (fetched.error) {
-      notes.push(fetched.error);
-    }
+  if (roomImage || snapshots.length > 0) {
+    notes.push('Gemini image generation uses text-guided staging from analyzed room context.');
   }
 
   try {
-    const generated = await getOpenAI().images.edit({
-      model: 'gpt-image-1',
-      image: images,
+    const generated = await getGeminiClient().images.generate({
+      model: getGeminiImageModel(),
       prompt: stagingPrompt,
-      size: '1536x1024',
-      quality: 'medium',
-      output_format: 'png',
+      response_format: 'b64_json',
     });
 
     const first = generated.data?.[0];

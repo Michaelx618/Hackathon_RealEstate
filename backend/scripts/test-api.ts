@@ -27,21 +27,25 @@ Structure your first reply as follows:
 Be conversational, clear, and responsive to follow-up questions. If something is outside your expertise (e.g. structural or legal), say so and suggest they consult a professional.`;
 
 async function main() {
-  const key = process.env.OPENAI_API_KEY;
+  const key = process.env.GEMINI_API_KEY;
   if (!key) {
-    console.error('❌ OPENAI_API_KEY not set. Add it to backend/.env');
+    console.error('❌ GEMINI_API_KEY not set. Add it to backend/.env');
     process.exit(1);
   }
-  console.log('✅ OPENAI_API_KEY is set\n');
+  console.log('✅ GEMINI_API_KEY is set\n');
 
-  const openai = new OpenAI({ apiKey: key });
+  const openai = new OpenAI({
+    apiKey: key,
+    baseURL: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai',
+  });
+  const chatModel = process.env.GEMINI_CHAT_MODEL || 'gemini-3.1-pro-preview';
 
   // --- Test 1: Text-only (no image) - quick sanity check and prompt style ---
   console.log('--- Test 1: Text-only (no image) ---');
   console.log('User message: "Single-family house in San Francisco. I want to convert to Airbnb. No image yet – what would you typically advise?"\n');
   try {
     const textRes = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: chatModel,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
@@ -68,7 +72,7 @@ async function main() {
   console.log('Using sample house image URL + "Location: Oakland. Townhouse. Convert to Airbnb."\n');
   try {
     const visionRes = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: chatModel,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {

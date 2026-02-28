@@ -1,13 +1,12 @@
 import { randomUUID } from 'crypto';
-import OpenAI, { toFile } from 'openai';
+import OpenAI from 'openai';
 import type { Response as ExpressResponse } from 'express';
 import pdfParse from 'pdf-parse';
-
-function getOpenAI(): OpenAI {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error('OPENAI_API_KEY is not set');
-  return new OpenAI({ apiKey: key });
-}
+import {
+  generateGeminiEditedImage,
+  getGeminiChatModel,
+  getGeminiClient,
+} from './ai-client.js';
 
 const SYSTEM_PROMPT = `You are a renovation, construction-cost, and rental-return advisor.
 
@@ -150,27 +149,6 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } | 
   }
 }
 
-async function toImageFileFromDataUrl(dataUrl: string, fileName: string): Promise<File> {
-  const decoded = decodeDataUrl(normalizeImageUrl(dataUrl));
-  if (!decoded) throw new Error('Invalid image payload');
-  return toFile(decoded.buffer, fileName, { type: decoded.mimeType });
-}
-
-async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<globalThis.Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; HomeKeyBot/1.0)',
-      },
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function mergeUniqueImages(current: string[] | undefined, incoming: string[], max: number): string[] {
   const merged: string[] = [];
   const seen = new Set<string>();
@@ -217,6 +195,44 @@ function buildRenderPrompt(session: Session, instruction?: string): string {
 
   renderLines.push('If reference/annotated images are provided, use them as renovation/style/layout direction.');
   return renderLines.join('\n\n');
+}
+
+async function summarizeVisualContextFromImages(
+  baseImage: string,
+  references: string[],
+  instruction?: string,
+): Promise<string | undefined> {
+  const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+    {
+      type: 'text',
+      text: [
+        'Summarize the room layout and design intent into one concise photorealistic image-generation prompt.',
+        'Focus on architecture, camera angle, materials, style direction, and furniture placement cues.',
+        'Do not include markdown. Keep it under 140 words.',
+        instruction ? `Latest owner instruction: ${instruction}` : undefined,
+      ].filter(Boolean).join('\n'),
+    },
+    { type: 'image_url', image_url: { url: normalizeImageUrl(baseImage) } },
+  ];
+
+  for (const image of references) {
+    content.push({ type: 'image_url', image_url: { url: normalizeImageUrl(image) } });
+  }
+
+  try {
+    const completion = await getGeminiClient().chat.completions.create({
+      model: getGeminiChatModel(),
+      temperature: 0.2,
+      max_tokens: 260,
+      messages: [{ role: 'user', content }],
+    });
+
+    const text = completion.choices[0]?.message?.content?.trim();
+    if (!text) return undefined;
+    return truncate(text, 800);
+  } catch {
+    return undefined;
+  }
 }
 
 async function prepareSupportingDocuments(docs: AdvisorDocumentInput[] | undefined): Promise<PreparedDocuments> {
@@ -452,8 +468,8 @@ export async function streamFirstReply(
   res.setHeader('Transfer-Encoding', 'chunked');
   res.setHeader('X-Session-Id', sessionId);
 
-  const stream = await getOpenAI().chat.completions.create({
-    model: 'gpt-4o',
+  const stream = await getGeminiClient().chat.completions.create({
+    model: getGeminiChatModel(),
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: built.parts },
@@ -493,8 +509,8 @@ export async function streamChatReply(sessionId: string, userMessage: string, re
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  const stream = await getOpenAI().chat.completions.create({
-    model: 'gpt-4o',
+  const stream = await getGeminiClient().chat.completions.create({
+    model: getGeminiChatModel(),
     messages,
     stream: true,
     max_tokens: 1400,
@@ -542,55 +558,25 @@ export async function renderAdvisorPreview(
     throw new Error('No base image available for rendering');
   }
 
-  const files: File[] = [await toImageFileFromDataUrl(baseImage, 'advisor-base.jpg')];
   const references = (session.context.targetImages || [])
     .slice(0, MAX_RENDER_REFERENCE_IMAGES);
-
-  for (const [index, image] of references.entries()) {
-    try {
-      files.push(await toImageFileFromDataUrl(image, `advisor-reference-${index + 1}.jpg`));
-    } catch {
-      // Ignore invalid reference images.
-    }
-  }
-
-  const prompt = buildRenderPrompt(session, input?.instruction);
+  const visualContext = await summarizeVisualContextFromImages(baseImage, references, input?.instruction);
+  const prompt = [
+    buildRenderPrompt(session, input?.instruction),
+    visualContext ? `Image-grounded context:\n${visualContext}` : undefined,
+  ].filter(Boolean).join('\n\n');
   const notes: string[] = [];
 
   try {
-    const generated = await getOpenAI().images.edit({
-      model: 'gpt-image-1',
-      image: files,
+    const previewImageDataUrl = await generateGeminiEditedImage({
       prompt,
-      size: '1536x1024',
-      quality: 'medium',
-      output_format: 'png',
+      baseImageDataUrl: baseImage,
+      referenceImageDataUrls: references,
     });
-
-    const first = generated.data?.[0];
-    if (first?.b64_json) {
-      const previewImageDataUrl = `data:image/png;base64,${first.b64_json}`;
-      session.latestRenderImageDataUrl = previewImageDataUrl;
-      session.latestRenderPrompt = prompt;
-      session.latestRenderNotes = notes;
-      return { previewImageDataUrl, prompt, notes };
-    }
-
-    if (first?.url) {
-      const fetched = await fetchWithTimeout(first.url, 12000);
-      if (fetched.ok) {
-        const contentType = fetched.headers.get('content-type')?.split(';')[0] || 'image/png';
-        const buffer = Buffer.from(await fetched.arrayBuffer());
-        const previewImageDataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
-        session.latestRenderImageDataUrl = previewImageDataUrl;
-        session.latestRenderPrompt = prompt;
-        session.latestRenderNotes = notes;
-        return { previewImageDataUrl, prompt, notes };
-      }
-      notes.push(`Failed to fetch generated preview image (HTTP ${fetched.status}).`);
-    } else {
-      notes.push('Image generation returned no image payload.');
-    }
+    session.latestRenderImageDataUrl = previewImageDataUrl;
+    session.latestRenderPrompt = prompt;
+    session.latestRenderNotes = notes;
+    return { previewImageDataUrl, prompt, notes };
   } catch (error) {
     notes.push(`Preview generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }

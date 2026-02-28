@@ -185,6 +185,17 @@ function normalizeFitLabel(status: SpacingAnalysis['fitStatus']): string {
   return 'Unknown fit'
 }
 
+function getPreviewUnavailableReason(result: FurnishingResponse | null): string | null {
+  if (!result) return null
+  const firstMatch = result.notes.find((note) =>
+    /image preview unavailable|image generation failed|quota/i.test(note),
+  )
+  if (!firstMatch) return null
+  const compact = firstMatch.replace(/\s+/g, ' ').trim()
+  if (compact.length <= 220) return compact
+  return `${compact.slice(0, 217)}...`
+}
+
 const apiBase = import.meta.env.VITE_API_URL ?? ''
 
 export default function FurnishingPreview() {
@@ -212,6 +223,7 @@ export default function FurnishingPreview() {
   const canStart = Boolean(roomImage && location.trim())
 
   const currentCurrency = result?.currency || 'USD'
+  const previewUnavailableReason = useMemo(() => getPreviewUnavailableReason(result), [result])
 
   const sortedSlots = useMemo(() => result?.slots ?? [], [result])
 
@@ -531,7 +543,7 @@ export default function FurnishingPreview() {
             ) : (
               <div className="furnish-images__card furnish-images__card--empty">
                 <strong>Preview unavailable</strong>
-                <span>Product list and spacing checks are still available below.</span>
+                <span>{previewUnavailableReason || 'Product list and spacing checks are still available below.'}</span>
               </div>
             )}
           </div>

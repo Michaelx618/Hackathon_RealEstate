@@ -4,6 +4,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { isGeminiConfigured } from './ai-client.js';
 import {
   createSession,
   getSession,
@@ -138,8 +139,8 @@ app.get('/api/hello', (_req: Request, res: Response) => {
 
 app.post('/api/furnishing/preview', async (req: Request, res: Response) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(503).json({ error: 'Furnishing preview is not configured (missing OPENAI_API_KEY)' });
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Furnishing preview is not configured (missing GEMINI_API_KEY)' });
       return;
     }
 
@@ -186,8 +187,8 @@ app.post('/api/furnishing/preview', async (req: Request, res: Response) => {
 
 app.post('/api/furnishing/session', async (req: Request, res: Response) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(503).json({ error: 'Furnishing preview is not configured (missing OPENAI_API_KEY)' });
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Furnishing preview is not configured (missing GEMINI_API_KEY)' });
       return;
     }
 
@@ -236,8 +237,8 @@ app.post('/api/furnishing/session', async (req: Request, res: Response) => {
 
 app.post('/api/furnishing/chat', async (req: Request, res: Response) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(503).json({ error: 'Furnishing preview is not configured (missing OPENAI_API_KEY)' });
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Furnishing preview is not configured (missing GEMINI_API_KEY)' });
       return;
     }
 
@@ -277,8 +278,8 @@ app.post('/api/furnishing/chat', async (req: Request, res: Response) => {
 
 app.post('/api/advisor/session', async (req: Request, res: Response) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(503).json({ error: 'Advisor is not configured (missing OPENAI_API_KEY)' });
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Advisor is not configured (missing GEMINI_API_KEY)' });
       return;
     }
 
@@ -336,8 +337,8 @@ app.post('/api/advisor/session', async (req: Request, res: Response) => {
 
 app.post('/api/advisor/chat', async (req: Request, res: Response) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(503).json({ error: 'Advisor is not configured (missing OPENAI_API_KEY)' });
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Advisor is not configured (missing GEMINI_API_KEY)' });
       return;
     }
     const { sessionId, message } = req.body as { sessionId?: string; message?: string };
@@ -360,8 +361,8 @@ app.post('/api/advisor/chat', async (req: Request, res: Response) => {
 
 app.post('/api/advisor/render', async (req: Request, res: Response) => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(503).json({ error: 'Advisor is not configured (missing OPENAI_API_KEY)' });
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Advisor is not configured (missing GEMINI_API_KEY)' });
       return;
     }
 
@@ -402,10 +403,10 @@ if (fs.existsSync(frontendDist)) {
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
-  if (process.env.OPENAI_API_KEY) {
-    console.log('OPENAI_API_KEY is set (advisor + furnishing preview enabled)');
+  if (isGeminiConfigured()) {
+    console.log('GEMINI_API_KEY is set (advisor + furnishing preview enabled)');
   } else {
-    console.log('OPENAI_API_KEY not set — set it in backend/.env or root .env to enable advisor and furnishing');
+    console.log('GEMINI_API_KEY not set — set it in backend/.env or root .env to enable advisor and furnishing');
   }
   if (fs.existsSync(frontendDist)) {
     console.log(`Frontend served on same port. Open http://localhost:${PORT}`);

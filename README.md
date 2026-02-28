@@ -14,26 +14,26 @@ npm run dev
 ```
 
 Then open **http://localhost:5173**.  
-For full AI advice (Design & renovate + Furniture preview), you need an **OpenAI API key**. See below.
+For full AI advice (Design & renovate + Furniture preview), you need a **Google Gemini API key**. See below.
 
 ---
 
-## OpenAI API key (for teammates)
+## Gemini API key (for teammates)
 
 The key lives in **`backend/.env`** on the machine of whoever set it up. **GitHub will not allow pushing that file** (it blocks commits that contain API keys), so teammates cannot get the key from git.
 
 **If you have the key (to share):** Send it to the team over Slack/email/1Password. Tell them to put it in `backend/.env` as shown below.
 
 **If you need the key to run the app:**
-1. Get the key from a teammate who has it, or create one at [platform.openai.com](https://platform.openai.com/api-keys) (billing required).
+1. Get the key from a teammate who has it, or create one at [Google AI Studio](https://aistudio.google.com/apikey).
 2. Create **`backend/.env`** in this repo (same folder as `backend/package.json`).
 3. Put one line in it:  
-   `OPENAI_API_KEY=sk-proj-paste-the-key-here`
+   `GEMINI_API_KEY=AIza-paste-the-key-here`
 4. Run from project root: `npm run dev`. Open http://localhost:5173 and use Design & renovate.
 
 The backend loads `backend/.env` and also a root `.env` if present (root wins). If the key is missing, the advisor shows “not configured”.
 
-**Check it’s set:** When the backend starts, it logs “OPENAI_API_KEY is set” or “OPENAI_API_KEY not set”.
+**Check it’s set:** When the backend starts, it logs “GEMINI_API_KEY is set” or “GEMINI_API_KEY not set”.
 
 ---
 
@@ -98,7 +98,7 @@ npm run build
 npm start
 ```
 
-Then open **http://localhost:3000**. Put `OPENAI_API_KEY` in a root `.env` (see `.env.example`).
+Then open **http://localhost:3000**. Put `GEMINI_API_KEY` in a root `.env` (see `.env.example`).
 
 ### Construction + return advisor
 
@@ -109,7 +109,7 @@ The **Construction + return advisor** flow is the main feature: users enter loca
 - total out-of-pocket estimate
 - rent and simple payback estimates
 
-The backend uses the OpenAI API (GPT-4o with vision), plus public benchmark references for Toronto permit/rent/zoning context.
+The backend uses Google Gemini models (via Gemini OpenAI-compatible endpoint), plus public benchmark references for Toronto permit/rent/zoning context.
 
 Benchmark links used in the app:
 - Toronto zoning map: https://map.toronto.ca/maps/map.jsp?app=ZBL_CONSULT
@@ -117,7 +117,11 @@ Benchmark links used in the app:
 - Rentals.ca national rent report: https://rentals.ca/national-rent-report
 - Urbanation condo rental survey (Toronto): https://urbanation.ca/news/q2-2025-condominium-rental-market-survey
 
-**API key:** Set `OPENAI_API_KEY` in a `.env` file at the **project root** (copy `.env.example`). The backend loads it via `load-env`. Without it, the advisor and furniture preview return a friendly “not configured yet” message.
+**API key:** Set `GEMINI_API_KEY` in a `.env` file at the **project root** (copy `.env.example`). The backend loads it via `load-env`. Without it, the advisor and furniture preview return a friendly “not configured yet” message.
+
+**Model overrides (optional):**
+- `GEMINI_CHAT_MODEL=gemini-3.1-pro-preview` (default)
+- `GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview` (default: Nano Banana Pro, room-preserving image edits)
 
 ---
 
@@ -130,7 +134,7 @@ Benchmark links used in the app:
    ```
 2. Open **http://localhost:5173** in your browser.
 3. **Home:** Enter a city/ZIP and click “Start my renovation plan” — you should land on the advisor with location pre-filled. Click “Design & renovate” in the nav to go there directly.
-4. **Construction + return advisor:** Pick property + renovation level, enter location, upload a current image (required), optionally upload target image and supporting docs, and click “Calculate project economics”. If `OPENAI_API_KEY` is set, you’ll get a streamed estimate with out-of-pocket + rent return and can send follow-up messages; if not, you’ll see the “not configured yet” message.
+4. **Construction + return advisor:** Pick property + renovation level, enter location, upload a current image (required), optionally upload target image and supporting docs, and click “Calculate project economics”. If `GEMINI_API_KEY` is set, you’ll get a streamed estimate with out-of-pocket + rent return and can send follow-up messages; if not, you’ll see the “not configured yet” message.
 5. **Listings:** Use “Example listings” and filters (city, type) — all sample data.
 6. **About / Contact:** Static pages and contact form (success message is local only).
 7. **404:** Visit e.g. `/foo` — you should see “Page not found” with a link home.
@@ -144,7 +148,7 @@ Benchmark links used in the app:
 When your team sets up hosting and the API:
 
 - **Frontend:** Build with `cd frontend && npm run build`. Serve the `frontend/dist` folder (e.g. Vercel, Netlify, or any static host). Set the API base URL if the backend is on a different origin (or use relative `/api` and proxy in production).
-- **Backend:** Set `OPENAI_API_KEY` and `PORT` in the host’s environment. Run `npm run build` then `npm start`, or run with `tsx`/`node` in dev. Enable CORS for the frontend origin if they’re on different domains.
+- **Backend:** Set `GEMINI_API_KEY` and `PORT` in the host’s environment. Run `npm run build` then `npm start`, or run with `tsx`/`node` in dev. Enable CORS for the frontend origin if they’re on different domains.
 - **Env:** Copy `backend/.env.example` to `backend/.env` and fill in; the host will use their own env vars (no need to commit `.env`).
 
 ## Scripts
@@ -156,7 +160,7 @@ When your team sets up hosting and the API:
 | frontend | `npm run build` | Production build |
 | backend  | `npm run dev` | Run server with tsx (no build) |
 | backend  | `npm run build` | Compile TS to `dist/` |
-| backend  | `npm run test:api` | Test advisor API (prompt + vision); uses `OPENAI_API_KEY` from `.env` |
+| backend  | `npm run test:api` | Test advisor API (prompt + vision); uses `GEMINI_API_KEY` from `.env` |
 | backend  | `npm start`   | Run compiled server |
 
 ---
@@ -167,9 +171,9 @@ When your team sets up hosting and the API:
 
 **Tagline:** From current floor plan to project economics: upload current state + optional docs, then get construction cost, out-of-pocket cash estimate, and rental return.
 
-**What it does:** Users enter address/city/ZIP, pick property + renovation type, upload a current image/floor plan, and optionally add supporting docs (PDF/text/image), area fields, and a target-outcome image. GPT-4o with vision compares current vs target state, estimates rough size, cross-checks document space data, and returns structured outputs for construction cost, permit/soft-cost assumptions, total out-of-pocket, monthly/annual rent estimate, simple payback, phased renovation plan, and zoning/permit reminders. Users can chat for follow-up scenario analysis.
+**What it does:** Users enter address/city/ZIP, pick property + renovation type, upload a current image/floor plan, and optionally add supporting docs (PDF/text/image), area fields, and a target-outcome image. Gemini with vision compares current vs target state, estimates rough size, cross-checks document space data, and returns structured outputs for construction cost, permit/soft-cost assumptions, total out-of-pocket, monthly/annual rent estimate, simple payback, phased renovation plan, and zoning/permit reminders. Users can chat for follow-up scenario analysis.
 
-**How we built it:** React + Vite (TypeScript) frontend, Node.js Express (TypeScript) backend. OpenAI API (GPT-4o) for chat and vision; streaming responses for the advisor. Frontend parses the reply for “Phase 1/2/3” and “Estimated cost” to show a timeline and cost card. Session-based chat so users can ask follow-ups. Image upload with client-side resize/compress before sending.
+**How we built it:** React + Vite (TypeScript) frontend, Node.js Express (TypeScript) backend. Google Gemini API (OpenAI-compatible endpoint) for chat/vision/image generation; streaming responses for the advisor. Frontend parses the reply for “Phase 1/2/3” and “Estimated cost” to show a timeline and cost card. Session-based chat so users can ask follow-ups. Image upload with client-side resize/compress before sending.
 
 **Challenges:** Keeping the AI output structured enough for the timeline/cost UI while staying conversational; handling missing API key gracefully so the app runs in any environment.
 
