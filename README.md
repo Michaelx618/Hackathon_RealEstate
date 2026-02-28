@@ -42,6 +42,12 @@ cd backend && npm install && npm run dev
 
 The frontend proxies `/api` requests to the backend in development.
 
+### Renovation advisor (Analyze layout)
+
+The **Analyze layout** page lets users upload a floor plan image and chat with an AI that suggests renovations, repurposing for tenants, ballpark costs, and design. The backend uses the OpenAI API (GPT-4o with vision).
+
+**Required:** Set `OPENAI_API_KEY` in the environment when running the backend (e.g. in a `.env` file or `export OPENAI_API_KEY=sk-...`). Without it, the advisor session and chat requests will fail.
+
 ## Scripts
 
 | Location  | Command     | Description        |

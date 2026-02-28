@@ -5,6 +5,7 @@ import Listings from './pages/Listings'
 import ListingDetail from './pages/ListingDetail'
 import About from './pages/About'
 import Contact from './pages/Contact'
+import Advisor from './pages/Advisor'
 import './App.css'
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/listings" element={<Listings />} />
             <Route path="/listings/:id" element={<ListingDetail />} />
+            <Route path="/advisor" element={<Advisor />} />
             <Route path="/about" element={<About />} />
             <Route path="/contact" element={<Contact />} />
           </Routes>

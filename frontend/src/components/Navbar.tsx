@@ -9,6 +9,7 @@ export default function Navbar() {
       <ul className="navbar__links">
         <li><Link to="/">Home</Link></li>
         <li><Link to="/listings">Listings</Link></li>
+        <li><Link to="/advisor">Analyze layout</Link></li>
         <li><Link to="/about">About</Link></li>
         <li><Link to="/contact">Contact</Link></li>
       </ul>
