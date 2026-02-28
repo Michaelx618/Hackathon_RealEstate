@@ -36,7 +36,9 @@ How to calculate:
 7. State assumptions clearly and keep math internally consistent.
 8. If the location is not Toronto or unknown, explicitly say you are using Toronto benchmarks as a proxy and recommend local quote validation.
 
-The first reply MUST include these exact bold labels on separate lines:
+The first reply MUST include these exact bold labels on separate lines (in this order):
+**Potential score:** [number from 0 to 100]/100 — one line only; rate investment/renovation potential based on layout, location, rental upside, and scope.
+**Estimated renovation timeline:** [e.g. 3–6 months or 6–12 months] — total duration from start to move-in ready.
 **Estimated current size from image:** [value]
 **Documented size:** [value or "Not provided"]
 **Matched size used for estimate:** [value]
@@ -47,7 +49,9 @@ The first reply MUST include these exact bold labels on separate lines:
 **Estimated annual gross rent:** [CAD range]
 **Simple payback:** [years range]
 
-After those lines, include these sections:
+Then include **Key factors:** on its own line, followed by 4–8 bullet points (each line starting with - ) that summarize: condition/layout strengths or issues, location upside, rental potential, main renovation drivers, and biggest risks or unknowns.
+
+After that, include these sections:
 1. **Renovation plan (phases):**
    **Phase 1:** ...
    **Phase 2:** ...

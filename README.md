@@ -14,7 +14,7 @@ npm run dev
 ```
 
 Then open **http://localhost:5173**.  
-For full AI advice, set `OPENAI_API_KEY` in `backend/.env` (see `backend/.env.example`). Without it, the advisor still loads and shows a friendly “not configured” message.
+For full AI advice, add `OPENAI_API_KEY` to a `.env` file in the **project root** (copy from `.env.example`). The backend loads env from the root. Without it, the advisor still loads and shows a friendly “not configured” message.
 
 ---
 
@@ -72,6 +72,15 @@ cd frontend && npm install && npm run dev
 
 The frontend proxies `/api` requests to the backend in development.
 
+**Single port (unified, for testing or deployment):** Build once, then run the server; it serves both the app and the API on one port:
+
+```bash
+npm run build
+npm start
+```
+
+Then open **http://localhost:3000**. Put `OPENAI_API_KEY` in a root `.env` (see `.env.example`).
+
 ### Construction + return advisor
 
 The **Construction + return advisor** flow is the main feature: users enter location, choose property + renovation type, upload a current-state image/floor plan, optionally add supporting documents and a target-outcome image, then get:
@@ -89,7 +98,7 @@ Benchmark links used in the app:
 - Rentals.ca national rent report: https://rentals.ca/national-rent-report
 - Urbanation condo rental survey (Toronto): https://urbanation.ca/news/q2-2025-condominium-rental-market-survey
 
-**API key:** Set `OPENAI_API_KEY` when running the backend (see `backend/.env.example`). Without it, the advisor returns a friendly “not configured yet” message so the rest of the app still works.
+**API key:** Set `OPENAI_API_KEY` in a `.env` file at the **project root** (copy `.env.example`). The backend loads it via `load-env`. Without it, the advisor and furniture preview return a friendly “not configured yet” message.
 
 ---
 

@@ -1,0 +1,40 @@
+{
+  "addressesFull": [
+    "124 Oak Street, San Francisco, CA 94102",
+    "88 Marina Blvd, San Francisco, CA 94123",
+    "456 Pine Ave, Oakland, CA 94610",
+    "2200 Pacific Heights Dr, San Francisco, CA 94115",
+    "901 Mission St, San Francisco, CA 94103",
+    "55 Tehama St, San Francisco, CA 94105",
+    "1200 Broadway, Oakland, CA 94612",
+    "3400 Grand Ave, Oakland, CA 94610",
+    "2500 Harrison St, San Francisco, CA 94110",
+    "1800 Divisadero St, San Francisco, CA 94115",
+    "789 Castro St, San Francisco, CA 94114",
+    "4100 MacArthur Blvd, Oakland, CA 94619"
+  ],
+  "addressesSample": [
+    "Austin, TX",
+    "Denver, CO",
+    "Portland, OR",
+    "Seattle, WA",
+    "San Francisco, CA",
+    "Austin, TX 78701",
+    "123 Main St, Portland OR",
+    "456 Oak Ave, Denver CO 80202"
+  ],
+  "floorPlanLinks": [
+    { "label": "Sample floor plan (Wikimedia)", "url": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Sample_Floorplan.jpg" },
+    { "label": "House floor plan (Wikimedia)", "url": "https://upload.wikimedia.org/wikipedia/commons/1/18/Floor_plan_1.jpg" },
+    { "label": "Brentmore plan (Wikimedia)", "url": "https://upload.wikimedia.org/wikipedia/commons/3/30/Typical_floor_plan_of_the_Brentmore_%28NYPL_b11389518-417244%29.jpg" }
+  ],
+  "houseImageUrl": "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=400",
+  "images": {
+    "floorPlans": [
+      { "label": "Sample floor plan (Wikimedia)", "path": "test-data/images/sample-floorplan.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Sample_Floorplan.jpg" },
+      { "label": "House floor plan (Wikimedia)", "path": "test-data/images/floor-plan-1.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/1/18/Floor_plan_1.jpg" },
+      { "label": "Brentmore plan (Wikimedia)", "path": "test-data/images/brentmore-plan.jpg", "url": "https://upload.wikimedia.org/wikipedia/commons/3/30/Typical_floor_plan_of_the_Brentmore_%28NYPL_b11389518-417244%29.jpg" }
+    ],
+    "housePhoto": { "path": "test-data/images/house-photo.jpg", "url": "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=400" }
+  }
+}

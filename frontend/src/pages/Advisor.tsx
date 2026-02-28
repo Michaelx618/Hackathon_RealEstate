@@ -32,6 +32,40 @@ function extractPhases(text: string): { phase: number; label: string }[] {
   return phases.slice(0, 6)
 }
 
+function extractPotentialScore(text: string): number | null {
+  const m = text.match(/\*\*Potential score:\*\*\s*(\d{1,3})\s*\/?\s*100/i)
+  if (m?.[1]) {
+    const n = parseInt(m[1], 10)
+    if (n >= 0 && n <= 100) return n
+  }
+  const alt = text.match(/Potential score[:\s]*(\d{1,3})\s*\/?\s*100/i)
+  if (alt?.[1]) {
+    const n = parseInt(alt[1], 10)
+    if (n >= 0 && n <= 100) return n
+  }
+  return null
+}
+
+function extractTimeline(text: string): string | null {
+  const m = text.match(/\*\*Estimated renovation timeline:\*\*\s*([^\n]+)/i)
+  if (m?.[1]) return m[1].trim()
+  const alt = text.match(/Estimated renovation timeline[:\s]*([^\n]+)/i)
+  return alt?.[1]?.trim() ?? null
+}
+
+function extractKeyFactors(text: string): string[] {
+  const factors: string[] = []
+  const keySection = text.match(/\*\*Key factors:\*\*\s*\n([\s\S]*?)(?=\n\s*\n|\*\*[A-Z]|$)/i)
+  if (!keySection?.[1]) return factors
+  const block = keySection[1]
+  const lines = block.split('\n').map((l) => l.trim()).filter(Boolean)
+  for (const line of lines) {
+    const cleaned = line.replace(/^[-*•]\s*/, '').trim()
+    if (cleaned.length > 2) factors.push(cleaned)
+  }
+  return factors.slice(0, 12)
+}
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -128,6 +162,7 @@ export default function Advisor() {
   }, [searchParams])
 
   const scrollToBottom = () => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const apiBase = import.meta.env.VITE_API_URL ?? ''
 
   const allAssistantText = [...messages, ...(streamingContent ? [{ role: 'assistant' as const, content: streamingContent }] : [])]
     .filter((m) => m.role === 'assistant')
@@ -135,6 +170,9 @@ export default function Advisor() {
     .join('\n')
 
   const phases = extractPhases(allAssistantText)
+  const potentialScore = extractPotentialScore(allAssistantText)
+  const timeline = extractTimeline(allAssistantText)
+  const keyFactors = extractKeyFactors(allAssistantText)
 
   const matchedSize = extractFirst(allAssistantText, [
     /\*\*Matched size used for estimate:\*\*\s*([^\n]+)/i,
@@ -226,7 +264,7 @@ export default function Advisor() {
     setStreamingContent('')
 
     try {
-      const res = await fetch('/api/advisor/session', {
+      const res = await fetch(`${apiBase}/api/advisor/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -292,7 +330,7 @@ export default function Advisor() {
     scrollToBottom()
 
     try {
-      const res = await fetch('/api/advisor/chat', {
+      const res = await fetch(`${apiBase}/api/advisor/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, message: text }),
@@ -488,14 +526,47 @@ export default function Advisor() {
         </section>
       ) : (
         <section className="advisor-chat">
+          {(potentialScore !== null || timeline || keyFactors.length > 0) && (
+            <div className="advisor-summary">
+              {potentialScore !== null && (
+                <div className="advisor-score-card" role="status" aria-label={`Potential score ${potentialScore} out of 100`}>
+                  <span className="advisor-score-card__label">Potential</span>
+                  <span className="advisor-score-card__value">
+                    <span className="advisor-score-card__number">{potentialScore}</span>
+                    <span className="advisor-score-card__max">/100</span>
+                  </span>
+                </div>
+              )}
+              {timeline && (
+                <div className="advisor-timeline-badge" role="status">
+                  <span className="advisor-timeline-badge__label">Est. timeline</span>
+                  <span className="advisor-timeline-badge__value">{timeline}</span>
+                </div>
+              )}
+              {keyFactors.length > 0 && (
+                <div className="advisor-key-factors" role="region" aria-label="Key factors">
+                  <h3 className="advisor-key-factors__title">Key factors</h3>
+                  <ul className="advisor-key-factors__list">
+                    {keyFactors.map((factor, i) => (
+                      <li key={i} className="advisor-key-factors__item">{factor}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
           {metricCards.length > 0 && (
-            <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
-              {metricCards.map((metric) => (
+            <div className="advisor-metrics-wrap">
+              <h3 className="advisor-metrics__title">Prices & returns</h3>
+              <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
+                {metricCards.map((metric) => (
                 <div className="advisor-metric-card" key={metric.label}>
                   <span className="advisor-metric-card__label">{metric.label}</span>
                   <span className="advisor-metric-card__value">{metric.value}</span>
                 </div>
               ))}
+              </div>
             </div>
           )}
 

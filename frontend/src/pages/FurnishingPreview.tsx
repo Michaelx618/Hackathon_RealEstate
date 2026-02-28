@@ -124,6 +124,8 @@ function formatMoney(value: number | null, currency: string): string {
   }
 }
 
+const apiBase = import.meta.env.VITE_API_URL ?? ''
+
 export default function FurnishingPreview() {
   const [roomPreview, setRoomPreview] = useState<string | null>(null)
   const [roomImage, setRoomImage] = useState<string | null>(null)
@@ -174,7 +176,7 @@ export default function FurnishingPreview() {
     setError(null)
 
     try {
-      const res = await fetch('/api/furnishing/preview', {
+      const res = await fetch(`${apiBase}/api/furnishing/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

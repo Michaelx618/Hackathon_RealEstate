@@ -1,6 +1,9 @@
 import './load-env';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 import {
   createSession,
   getSession,
@@ -10,11 +13,18 @@ import {
 import type { AdvisorDocumentInput, AdvisorSessionInput } from './advisor.js';
 import { buildFurnishingPreview } from './furnishing.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '35mb' }));
+
+// Serve frontend build from same port (for deployment)
+const frontendDist = path.join(__dirname, '../../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+}
 
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -214,6 +224,21 @@ app.post('/api/advisor/chat', async (req: Request, res: Response) => {
   }
 });
 
+// SPA fallback: serve index.html for non-API routes when frontend build exists
+if (fs.existsSync(frontendDist)) {
+  app.get('*', (_req: Request, res: Response) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
+
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
+  if (process.env.OPENAI_API_KEY) {
+    console.log('OPENAI_API_KEY is set (advisor + furnishing preview enabled)');
+  } else {
+    console.log('OPENAI_API_KEY not set — set it in backend/.env or root .env to enable advisor and furnishing');
+  }
+  if (fs.existsSync(frontendDist)) {
+    console.log(`Frontend served on same port. Open http://localhost:${PORT}`);
+  }
 });
