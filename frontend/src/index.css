@@ -1,5 +1,5 @@
 :root {
-  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-family: 'Outfit', 'DM Sans', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;
@@ -7,25 +7,30 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Real estate palette */
-  --primary: #0d9488;
-  --primary-dark: #0f766e;
-  --text: #1f2937;
-  --muted-text: #6b7280;
-  --bg: #fafafa;
+  /* Design system: warm, grounded real estate feel */
+  --primary: #b45309;
+  --primary-dark: #92400e;
+  --primary-light: #fef3c7;
+  --text: #1c1917;
+  --text-soft: #44403c;
+  --muted-text: #78716c;
+  --bg: #fafaf9;
   --card-bg: #ffffff;
-  --nav-bg: #ffffff;
-  --border: #e5e7eb;
-  --muted: #f3f4f6;
-  --shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  --nav-bg: rgba(255, 255, 255, 0.92);
+  --border: #e7e5e4;
+  --muted: #f5f5f4;
+  --shadow: 0 4px 24px rgba(28, 25, 23, 0.06);
+  --shadow-lg: 0 12px 40px rgba(28, 25, 23, 0.1);
   --input-bg: #ffffff;
-  --input-text: #1f2937;
-  --input-placeholder: #9ca3af;
+  --input-text: #1c1917;
+  --input-placeholder: #a8a29e;
 
-  /* Hero (teal gradient) */
-  --hero-from: #0d9488;
-  --hero-to: #0f766e;
+  /* Hero: warm gradient */
+  --hero-from: #b45309;
+  --hero-to: #92400e;
   --hero-text: #ffffff;
+  --radius: 12px;
+  --radius-sm: 8px;
 }
 
 * {

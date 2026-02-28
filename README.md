@@ -14,7 +14,26 @@ npm run dev
 ```
 
 Then open **http://localhost:5173**.  
-For full AI advice, add `OPENAI_API_KEY` to a `.env` file in the **project root** (copy from `.env.example`). The backend loads env from the root. Without it, the advisor still loads and shows a friendly “not configured” message.
+For full AI advice (Design & renovate + Furniture preview), you need an **OpenAI API key**. See below.
+
+---
+
+## OpenAI API key (for teammates)
+
+The key lives in **`backend/.env`** on the machine of whoever set it up. **GitHub will not allow pushing that file** (it blocks commits that contain API keys), so teammates cannot get the key from git.
+
+**If you have the key (to share):** Send it to the team over Slack/email/1Password. Tell them to put it in `backend/.env` as shown below.
+
+**If you need the key to run the app:**
+1. Get the key from a teammate who has it, or create one at [platform.openai.com](https://platform.openai.com/api-keys) (billing required).
+2. Create **`backend/.env`** in this repo (same folder as `backend/package.json`).
+3. Put one line in it:  
+   `OPENAI_API_KEY=sk-proj-paste-the-key-here`
+4. Run from project root: `npm run dev`. Open http://localhost:5173 and use Design & renovate.
+
+The backend loads `backend/.env` and also a root `.env` if present (root wins). If the key is missing, the advisor shows “not configured”.
+
+**Check it’s set:** When the backend starts, it logs “OPENAI_API_KEY is set” or “OPENAI_API_KEY not set”.
 
 ---
 

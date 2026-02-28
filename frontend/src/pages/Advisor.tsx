@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { ADVISOR_QUESTIONS, buildGoalFromAnswers, type AdvisorAnswers } from '../data/advisorQuestions'
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
+
+type Step = 'upload' | 'questions'
 
 type ImageBatch = {
   previews: string[]
@@ -143,8 +146,9 @@ export default function Advisor() {
   const [targetImagesBase64, setTargetImagesBase64] = useState<string[]>([])
 
   const [currentHouseStatus, setCurrentHouseStatus] = useState('')
-  const [firstMessage, setFirstMessage] = useState('')
   const [location, setLocation] = useState('')
+  const [step, setStep] = useState<Step>('upload')
+  const [answers, setAnswers] = useState<AdvisorAnswers>({})
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -254,10 +258,10 @@ export default function Advisor() {
       setError('Please upload at least one current house photo first.')
       return
     }
-    if (!firstMessage.trim()) {
-      setError('Please describe your needs and expected outcome.')
-      return
-    }
+
+    const firstMessage = buildGoalFromAnswers(answers, location)
+    const notes = currentHouseStatus.trim() ? ` Additional notes: ${currentHouseStatus.trim()}.` : ''
+    const fullMessage = firstMessage + notes
 
     setLoading(true)
     setError(null)
@@ -274,8 +278,8 @@ export default function Advisor() {
           targetImage: targetImagesBase64[0] || undefined,
           targetImages: targetImagesBase64.length > 0 ? targetImagesBase64 : undefined,
           currentHouseStatus: currentHouseStatus.trim() || undefined,
-          firstMessage: firstMessage.trim() || undefined,
-          propertyType: 'House / Townhouse',
+          firstMessage: fullMessage,
+          propertyType: answers.propertyType ? answers.propertyType : 'House / Townhouse',
           location: location.trim() || undefined,
         }),
       })
@@ -292,9 +296,8 @@ export default function Advisor() {
       const sid = res.headers.get('X-Session-Id')
       if (sid) setSessionId(sid)
 
-      const header = `[House / Townhouse | Current images: ${currentImagesBase64.length} | Target images: ${targetImagesBase64.length}]`
-      const status = currentHouseStatus.trim() ? `Current status: ${currentHouseStatus.trim()}\n` : ''
-      const userText = `${status}Goal: ${firstMessage.trim()}`
+      const header = `[${answers.propertyType || 'House'} | Current images: ${currentImagesBase64.length} | Target images: ${targetImagesBase64.length}]`
+      const userText = `Goal (from questionnaire): ${fullMessage}`
       setMessages([{ role: 'user', content: `${header}\n${userText}` }])
 
       const reader = res.body?.getReader()
@@ -374,32 +377,36 @@ export default function Advisor() {
     setTargetImagePreviews([])
     setTargetImagesBase64([])
     setCurrentHouseStatus('')
-    setFirstMessage('')
     setLocation('')
+    setStep('upload')
+    setAnswers({})
     setStreamingContent('')
     setError(null)
     if (currentImageInputRef.current) currentImageInputRef.current.value = ''
     if (targetImageInputRef.current) targetImageInputRef.current.value = ''
   }
 
+  const setAnswer = (id: string, value: string) => {
+    setAnswers((prev) => ({ ...prev, [id]: value }))
+  }
+
   return (
     <div className="page page--advisor">
       <h1 className="page__title">House renovation cost + return advisor</h1>
       <p className="page__lead">
-        Upload multiple images for your house right now and multiple images for the modified target outcome.
+        Upload your floor plan, answer a few questions about your property and goals, then get a detailed renovation plan with cost and timeline estimates.
       </p>
       <p className="advisor-disclaimer">
         Scope is restricted to houses, townhouses, duplexes, and similar house-type properties. Condos and apartments are not supported.
       </p>
 
-      {!sessionId && (
+      {!sessionId && step === 'upload' && (
         <section className="advisor-features" aria-label="How it works">
-          <h2 className="advisor-features__title">Input requirements</h2>
+          <h2 className="advisor-features__title">How it works</h2>
           <ul className="advisor-features__list">
-            <li><strong>Box 1:</strong> upload one or more current house photos/floor plans.</li>
-            <li><strong>Box 2:</strong> upload one or more modified target sketches/floor plans.</li>
-            <li><strong>Box 3:</strong> describe current house status.</li>
-            <li><strong>Box 4:</strong> describe your needs and expected outcome.</li>
+            <li><strong>Step 1:</strong> Upload your current house photos or floor plan (required). Optionally add target/sketch images.</li>
+            <li><strong>Step 2:</strong> Answer a few multiple-choice questions about your property and goals.</li>
+            <li><strong>Then:</strong> We’ll generate your renovation plan and report with cost and timeline estimates.</li>
           </ul>
           <div className="advisor-sources">
             <strong>Public data references:</strong>{' '}
@@ -414,9 +421,11 @@ export default function Advisor() {
         </section>
       )}
 
-      {!sessionId ? (
+      {!sessionId && step === 'upload' ? (
         <section className="advisor-upload">
-          <label className="advisor-upload__label">Current house photos (upload multiple)</label>
+          <label className="advisor-upload__label">Step 1 — Upload your floor plan</label>
+          <p className="advisor-upload__hint">Upload one or more photos of your current house or floor plan. Optionally add target/sketch images.</p>
+          <label className="advisor-upload__label">Current house photos (required)</label>
           <div
             className="advisor-upload__zone"
             onClick={() => currentImageInputRef.current?.click()}
@@ -492,99 +501,150 @@ export default function Advisor() {
             )}
           </div>
 
+          {error && <p className="advisor-upload__error">{error}</p>}
+          <div className="advisor-upload__actions">
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => setStep('questions')}
+              disabled={currentImagesBase64.length === 0}
+            >
+              Next: Answer a few questions
+            </button>
+          </div>
+        </section>
+      ) : !sessionId && step === 'questions' ? (
+        <section className="advisor-questions">
+          <h2 className="advisor-questions__title">Step 2 — Tell us about your project</h2>
+          <p className="advisor-questions__intro">Answer these so we can tailor your renovation plan and report.</p>
+
           <label className="advisor-upload__label">
-            Current house status (optional)
-            <textarea
-              value={currentHouseStatus}
-              onChange={(e) => setCurrentHouseStatus(e.target.value)}
-              placeholder="Describe the current condition (layout issues, old systems, damaged areas, etc.)."
-              className="advisor-chat__input"
-              rows={3}
+            Location (city or ZIP)
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. Toronto, ON or M5V 1A1"
+              className="advisor-upload__text"
             />
           </label>
 
+          {ADVISOR_QUESTIONS.map((q) => (
+            <div key={q.id} className="advisor-question">
+              <span className="advisor-question__label">{q.label}</span>
+              {q.description && <span className="advisor-question__desc">{q.description}</span>}
+              <div className="advisor-question__options" role="group" aria-label={q.label}>
+                {q.options.map((opt) => (
+                  <label key={opt.value} className="advisor-question__option">
+                    <input
+                      type="radio"
+                      name={q.id}
+                      value={opt.value}
+                      checked={(answers[q.id] ?? '') === opt.value}
+                      onChange={() => setAnswer(q.id, opt.value)}
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+
           <label className="advisor-upload__label">
-            Describe your needs and expected outcome (required)
+            Anything else we should know? (optional)
             <textarea
-              value={firstMessage}
-              onChange={(e) => setFirstMessage(e.target.value)}
-              placeholder="Describe what you want to build, layout goals, and rental plan."
+              value={currentHouseStatus}
+              onChange={(e) => setCurrentHouseStatus(e.target.value)}
+              placeholder="Current condition details, concerns, or specific goals."
               className="advisor-chat__input"
-              rows={4}
+              rows={2}
             />
           </label>
 
           {error && <p className="advisor-upload__error">{error}</p>}
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={startSession}
-            disabled={currentImagesBase64.length === 0 || !firstMessage.trim() || loading}
-          >
-            {loading ? 'Calculating…' : 'Calculate project economics'}
-          </button>
+          <div className="advisor-questions__actions">
+            <button type="button" className="btn btn--secondary" onClick={() => setStep('upload')}>
+              Back
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={startSession}
+              disabled={loading}
+            >
+              {loading ? 'Generating your plan…' : 'Generate my plan'}
+            </button>
+          </div>
         </section>
       ) : (
-        <section className="advisor-chat">
-          {(potentialScore !== null || timeline || keyFactors.length > 0) && (
-            <div className="advisor-summary">
-              {potentialScore !== null && (
-                <div className="advisor-score-card" role="status" aria-label={`Potential score ${potentialScore} out of 100`}>
-                  <span className="advisor-score-card__label">Potential</span>
-                  <span className="advisor-score-card__value">
-                    <span className="advisor-score-card__number">{potentialScore}</span>
-                    <span className="advisor-score-card__max">/100</span>
-                  </span>
+        <section className="advisor-chat advisor-report">
+          <header className="advisor-report__header">
+            <h2 className="advisor-report__title">Your renovation plan</h2>
+            <p className="advisor-report__subtitle">Based on your floor plan and answers. You can ask follow-up questions in the chat on the right.</p>
+          </header>
+          <div className="advisor-report__layout">
+            <aside className="advisor-report__cards">
+              {(potentialScore !== null || timeline || keyFactors.length > 0) && (
+                <div className="advisor-summary">
+                  {potentialScore !== null && (
+                    <div className="advisor-score-card" role="status" aria-label={`Potential score ${potentialScore} out of 100`}>
+                      <span className="advisor-score-card__label">Potential</span>
+                      <span className="advisor-score-card__value">
+                        <span className="advisor-score-card__number">{potentialScore}</span>
+                        <span className="advisor-score-card__max">/100</span>
+                      </span>
+                    </div>
+                  )}
+                  {timeline && (
+                    <div className="advisor-timeline-badge" role="status">
+                      <span className="advisor-timeline-badge__label">Est. timeline</span>
+                      <span className="advisor-timeline-badge__value">{timeline}</span>
+                    </div>
+                  )}
+                  {keyFactors.length > 0 && (
+                    <div className="advisor-key-factors" role="region" aria-label="Key factors">
+                      <h3 className="advisor-key-factors__title">Key factors</h3>
+                      <ul className="advisor-key-factors__list">
+                        {keyFactors.map((factor, i) => (
+                          <li key={i} className="advisor-key-factors__item">{factor}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
-              {timeline && (
-                <div className="advisor-timeline-badge" role="status">
-                  <span className="advisor-timeline-badge__label">Est. timeline</span>
-                  <span className="advisor-timeline-badge__value">{timeline}</span>
-                </div>
-              )}
-              {keyFactors.length > 0 && (
-                <div className="advisor-key-factors" role="region" aria-label="Key factors">
-                  <h3 className="advisor-key-factors__title">Key factors</h3>
-                  <ul className="advisor-key-factors__list">
-                    {keyFactors.map((factor, i) => (
-                      <li key={i} className="advisor-key-factors__item">{factor}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
 
-          {metricCards.length > 0 && (
-            <div className="advisor-metrics-wrap">
-              <h3 className="advisor-metrics__title">Prices & returns</h3>
-              <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
-                {metricCards.map((metric) => (
-                <div className="advisor-metric-card" key={metric.label}>
-                  <span className="advisor-metric-card__label">{metric.label}</span>
-                  <span className="advisor-metric-card__value">{metric.value}</span>
-                </div>
-              ))}
-              </div>
-            </div>
-          )}
-
-          {phases.length > 0 && (
-            <div className="advisor-timeline" role="region" aria-label="Renovation plan phases">
-              <h3 className="advisor-timeline__title">Renovation plan</h3>
-              <div className="advisor-timeline__graph">
-                {phases.map((p, i) => (
-                  <div key={p.phase} className="advisor-timeline__phase">
-                    <span className="advisor-timeline__phase-num">Phase {p.phase}</span>
-                    <span className="advisor-timeline__phase-label">{p.label}</span>
-                    {i < phases.length - 1 && <span className="advisor-timeline__connector" aria-hidden />}
+              {metricCards.length > 0 && (
+                <div className="advisor-metrics-wrap">
+                  <h3 className="advisor-metrics__title">Prices & returns</h3>
+                  <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
+                    {metricCards.map((metric) => (
+                    <div className="advisor-metric-card" key={metric.label}>
+                      <span className="advisor-metric-card__label">{metric.label}</span>
+                      <span className="advisor-metric-card__value">{metric.value}</span>
+                    </div>
+                  ))}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                </div>
+              )}
 
+              {phases.length > 0 && (
+                <div className="advisor-timeline" role="region" aria-label="Renovation plan phases">
+                  <h3 className="advisor-timeline__title">Renovation plan</h3>
+                  <div className="advisor-timeline__graph">
+                    {phases.map((p, i) => (
+                      <div key={p.phase} className="advisor-timeline__phase">
+                        <span className="advisor-timeline__phase-num">Phase {p.phase}</span>
+                        <span className="advisor-timeline__phase-label">{p.label}</span>
+                        {i < phases.length - 1 && <span className="advisor-timeline__connector" aria-hidden />}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </aside>
+
+            <div className="advisor-report__chat">
           <div className="advisor-chat__messages">
             {messages.map((m, i) => (
               <div key={i} className={`advisor-chat__msg advisor-chat__msg--${m.role}`}>
@@ -615,7 +675,7 @@ export default function Advisor() {
               }}
               placeholder="Ask for scenario changes, sensitivity checks, or more precise assumptions..."
               className="advisor-chat__input"
-              rows={2}
+              rows={4}
               disabled={loading}
             />
             <div className="advisor-chat__actions">
@@ -641,6 +701,8 @@ export default function Advisor() {
               <button type="button" className="btn btn--secondary" onClick={reset}>
                 New project
               </button>
+            </div>
+          </div>
             </div>
           </div>
         </section>
