@@ -149,7 +149,7 @@
 
 .section__subtitle {
   font-size: 1rem;
-  color: var(--muted-text);
+  color: var(--text);
   margin: 0 0 1.5rem;
 }
 
@@ -241,7 +241,9 @@
 /* CTA */
 .cta {
   text-align: center;
-  background: var(--muted);
+  /* use a softened version of hero gradient for CTA to keep palette cohesive */
+  background: linear-gradient(135deg, var(--hero-from) 0%, var(--hero-to) 100%);
+  color: white;
   border-radius: 12px;
   margin: 0 2rem 3rem;
 }
@@ -1247,8 +1249,12 @@ html.dark {
   --input-text: #e6eef6;
   --input-placeholder: #6b7280;
   --shadow: 0 6px 18px rgba(2,6,23,0.6);
-  --primary: #34d399;
-  --primary-dark: #10b981;
+  --primary: #8b5cf6; /* violet-500 */
+  --primary-dark: #7c3aed; /* violet-600 */
+  /* hero gradient for dark mode */
+  --hero-from: #1e3a8a; /* indigo-900 */
+  --hero-to: #2563eb; /* blue-600 */
+  --hero-text: #f3f4f6;
 }
 
 /* smooth color transitions */

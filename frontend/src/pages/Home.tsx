@@ -72,7 +72,7 @@ export default function Home() {
 
       <section className="section cta">
         <h2 className="section__title">Ready to design your conversion?</h2>
-        <p className="cta__text">
+        <p className="section__subtitle">
           Upload your floor plan and get AI-powered advice for renovating, adding suites, or converting to short-term rental.
         </p>
         <button type="button" className="btn btn--primary" onClick={() => navigate('/advisor')}>Design & renovate</button>
