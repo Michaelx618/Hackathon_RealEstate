@@ -7,14 +7,12 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Design system: warm, grounded real estate feel */
-  --primary: #b45309;
-  --primary-dark: #92400e;
-  --primary-light: #fef3c7;
-  --text: #1c1917;
-  --text-soft: #44403c;
-  --muted-text: #78716c;
-  --bg: #fafaf9;
+  /* Real estate palette */
+  --primary: #6366f1; /* indigo-500 */
+  --primary-dark: #4f46e5; /* indigo-600 */
+  --text: #1f2937;
+  --muted-text: #6b7280;
+  --bg: #fafafa;
   --card-bg: #ffffff;
   --nav-bg: rgba(255, 255, 255, 0.92);
   --border: #e7e5e4;
@@ -25,10 +23,10 @@
   --input-text: #1c1917;
   --input-placeholder: #a8a29e;
 
-  /* Hero: warm gradient */
-  --hero-from: #b45309;
-  --hero-to: #92400e;
-  --hero-text: #ffffff;
+  /* Hero (blue / indigo gradient) */
+  --hero-from: #4f46e5; /* indigo-600 */
+  --hero-to: #3b82f6; /* blue-500 */
+  --hero-text: #f9fafb;
   --radius: 12px;
   --radius-sm: 8px;
 }
