@@ -1,41 +1,82 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-type FurnishingLineItem = {
+type ChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+type FurnishingOption = {
+  optionId: string
+  source: 'ikea' | 'link'
   name: string
-  category?: string
-  quantity: number
-  unitPrice: number | null
-  subtotal: number | null
-  currency: string
-  dimensions?: string
-  source: 'link' | 'description'
-  link?: string
-  notes?: string
-  estimatedPrice: boolean
-}
-
-type SourceProduct = {
-  link: string
-  title?: string
-  price?: number
-  currency?: string
+  url: string
   imageUrl?: string
-  dimensions?: string
-  description?: string
-  status: 'ok' | 'error'
-  error?: string
+  unitPrice: number | null
+  currency: string
+  dimensionsText?: string
+  widthCm?: number
+  depthCm?: number
+  heightCm?: number
+  itemNo?: string
+  typeName?: string
 }
 
-type FurnishingResult = {
+type FurnishingSlot = {
+  slotId: string
+  label: string
+  category: string
+  searchQuery: string
+  quantity: number
+  constraints?: string
+  selectedOptionId?: string
+  options: FurnishingOption[]
+}
+
+type FurnishingSelectedItem = {
+  slotId: string
+  slotLabel: string
+  quantity: number
+  optionId: string
+  name: string
+  url: string
+  imageUrl?: string
+  unitPrice: number | null
+  currency: string
+  subtotal: number | null
+  dimensionsText?: string
+  widthCm?: number
+  depthCm?: number
+  heightCm?: number
+  itemNo?: string
+}
+
+type RoomProfile = {
+  estimatedWidthM?: number
+  estimatedDepthM?: number
+  estimatedAreaSqm?: number
+  source: 'floorplan' | 'image' | 'default'
+  notes: string[]
+}
+
+type SpacingAnalysis = {
+  estimatedAreaSqm?: number
+  usedAreaSqm?: number
+  coverageRatio?: number
+  fitStatus: 'good' | 'moderate' | 'tight' | 'unknown'
+  notes: string[]
+}
+
+type FurnishingResponse = {
+  sessionId: string
+  assistantMessage: string
   previewImageDataUrl?: string
-  stagingPrompt: string
-  summary: string
-  assumptions: string[]
-  items: FurnishingLineItem[]
+  slots: FurnishingSlot[]
+  selectedItems: FurnishingSelectedItem[]
   totalPrice: number
   currency: string
   missingPriceCount: number
-  sourceProducts: SourceProduct[]
+  spacing: SpacingAnalysis
+  roomProfile: RoomProfile
   notes: string[]
 }
 
@@ -104,17 +145,17 @@ function parseLinks(raw: string): string[] {
         unique.add(url.toString())
       }
     } catch {
-      // Skip malformed links.
+      // Skip invalid links.
     }
   }
 
-  return [...unique].slice(0, 8)
+  return [...unique].slice(0, 10)
 }
 
 function formatMoney(value: number | null, currency: string): string {
   if (typeof value !== 'number') return 'N/A'
   try {
-    return new Intl.NumberFormat('en-CA', {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
       maximumFractionDigits: 2,
@@ -124,21 +165,64 @@ function formatMoney(value: number | null, currency: string): string {
   }
 }
 
+function formatDims(item: {
+  dimensionsText?: string
+  widthCm?: number
+  depthCm?: number
+  heightCm?: number
+}): string | null {
+  if (item.dimensionsText) return item.dimensionsText
+  if (item.widthCm && item.depthCm) {
+    return `${item.widthCm} cm x ${item.depthCm} cm${item.heightCm ? ` x ${item.heightCm} cm` : ''}`
+  }
+  return null
+}
+
+function normalizeFitLabel(status: SpacingAnalysis['fitStatus']): string {
+  if (status === 'good') return 'Good fit'
+  if (status === 'moderate') return 'Moderate fit'
+  if (status === 'tight') return 'Tight fit'
+  return 'Unknown fit'
+}
+
 const apiBase = import.meta.env.VITE_API_URL ?? ''
 
 export default function FurnishingPreview() {
   const [roomPreview, setRoomPreview] = useState<string | null>(null)
   const [roomImage, setRoomImage] = useState<string | null>(null)
-  const [description, setDescription] = useState('')
-  const [productLinksText, setProductLinksText] = useState('')
-  const [currency, setCurrency] = useState('CAD')
+  const [floorPlanPreview, setFloorPlanPreview] = useState<string | null>(null)
+  const [floorPlanImage, setFloorPlanImage] = useState<string | null>(null)
+
+  const [location, setLocation] = useState('')
+  const [initialRequest, setInitialRequest] = useState('')
+  const [linksText, setLinksText] = useState('')
+
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [result, setResult] = useState<FurnishingResponse | null>(null)
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<FurnishingResult | null>(null)
 
-  const inputRef = useRef<HTMLInputElement>(null)
+  const roomInputRef = useRef<HTMLInputElement>(null)
+  const floorPlanInputRef = useRef<HTMLInputElement>(null)
+  const chatEndRef = useRef<HTMLDivElement>(null)
 
-  const onSelectFile = async (fileList: FileList | null) => {
+  const canStart = Boolean(roomImage && location.trim())
+
+  const currentCurrency = result?.currency || 'USD'
+
+  const sortedSlots = useMemo(() => result?.slots ?? [], [result])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  const onSelectImage = async (
+    fileList: FileList | null,
+    target: 'room' | 'floorPlan',
+  ) => {
     if (!fileList || fileList.length === 0) return
     const file = fileList[0]
 
@@ -155,35 +239,46 @@ export default function FurnishingPreview() {
     try {
       const preview = await readAsDataUrl(file)
       const encoded = await compressImage(file)
-      setRoomPreview(preview)
-      setRoomImage(encoded)
       setError(null)
-      setResult(null)
+
+      if (target === 'room') {
+        setRoomPreview(preview)
+        setRoomImage(encoded)
+      } else {
+        setFloorPlanPreview(preview)
+        setFloorPlanImage(encoded)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process image.')
     }
   }
 
-  const generatePreview = async () => {
+  const startSession = async () => {
     if (!roomImage) {
       setError('Please upload your unit photo first.')
       return
     }
+    if (!location.trim()) {
+      setError('Please enter your property address/location.')
+      return
+    }
 
-    const productLinks = parseLinks(productLinksText)
+    const firstMessage = initialRequest.trim() || 'Please plan and stage this room with practical furniture options.'
+    const productLinks = parseLinks(linksText)
 
     setLoading(true)
     setError(null)
 
     try {
-      const res = await fetch(`${apiBase}/api/furnishing/preview`, {
+      const res = await fetch(`${apiBase}/api/furnishing/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomImage,
-          requestText: description.trim() || undefined,
+          floorPlanImage: floorPlanImage || undefined,
+          location: location.trim(),
+          firstMessage,
           productLinks,
-          currency,
         }),
       })
 
@@ -192,122 +287,251 @@ export default function FurnishingPreview() {
         throw new Error((data?.error as string | undefined) || `Request failed (${res.status})`)
       }
 
-      const data = await res.json() as FurnishingResult
+      const data = await res.json() as FurnishingResponse
+      const sid = data.sessionId || res.headers.get('X-Session-Id')
+      if (!sid) throw new Error('Session ID missing in response.')
+
+      setSessionId(sid)
       setResult(data)
+      setMessages([
+        { role: 'user', content: firstMessage },
+        { role: 'assistant', content: data.assistantMessage },
+      ])
+      setChatInput('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong while generating preview.')
+      setError(err instanceof Error ? err.message : 'Failed to start furnishing session.')
     } finally {
       setLoading(false)
     }
   }
 
+  const sendChat = async () => {
+    const sid = sessionId
+    const text = chatInput.trim()
+    if (!sid || !text) return
+
+    setChatInput('')
+    setMessages((prev) => [...prev, { role: 'user', content: text }])
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`${apiBase}/api/furnishing/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sid, message: text }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data?.error as string | undefined) || `Request failed (${res.status})`)
+      }
+
+      const data = await res.json() as FurnishingResponse
+      setResult(data)
+      setMessages((prev) => [...prev, { role: 'assistant', content: data.assistantMessage }])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send message.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const selectOption = async (slot: FurnishingSlot, option: FurnishingOption) => {
+    const sid = sessionId
+    if (!sid) return
+
+    setMessages((prev) => [...prev, { role: 'user', content: `Use ${option.name} for ${slot.label}.` }])
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`${apiBase}/api/furnishing/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sid,
+          action: {
+            type: 'select_option',
+            slotId: slot.slotId,
+            optionId: option.optionId,
+          },
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data?.error as string | undefined) || `Request failed (${res.status})`)
+      }
+
+      const data = await res.json() as FurnishingResponse
+      setResult(data)
+      setMessages((prev) => [...prev, { role: 'assistant', content: data.assistantMessage }])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to switch furniture option.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const resetSession = () => {
+    setSessionId(null)
+    setMessages([])
+    setResult(null)
+    setChatInput('')
+    setError(null)
+  }
+
   return (
     <div className="page page--furnish">
-      <h1 className="page__title">Furniture + appliance preview</h1>
+      <h1 className="page__title">Design & furnish preview</h1>
       <p className="page__lead">
-        Upload your room photo, describe what you want, or paste product links. We generate a staged preview and itemized budget.
+        Upload your room, optionally upload floor plan, then chat to iteratively pick real IKEA products with sizing, links, spacing checks, and total budget.
       </p>
 
-      <section className="furnish-panel">
-        <label className="furnish-panel__label">Unit photo</label>
-        <div
-          className="furnish-upload"
-          onClick={() => inputRef.current?.click()}
-          onDragOver={(e) => {
-            e.preventDefault()
-            e.currentTarget.classList.add('furnish-upload--drag')
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault()
-            e.currentTarget.classList.remove('furnish-upload--drag')
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            e.currentTarget.classList.remove('furnish-upload--drag')
-            onSelectFile(e.dataTransfer.files)
-          }}
-        >
+      {!sessionId && (
+        <section className="furnish-panel">
+          <label className="furnish-panel__label">Property address/location (required for localized pricing)</label>
           <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              onSelectFile(e.target.files)
-              e.currentTarget.value = ''
+            type="text"
+            className="advisor-chat__input"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="Example: 125 Main St, Seattle, WA"
+          />
+
+          <label className="furnish-panel__label">Unit photo (required)</label>
+          <div
+            className="furnish-upload"
+            onClick={() => roomInputRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.currentTarget.classList.add('furnish-upload--drag')
             }}
-            className="furnish-upload__input"
-          />
-          {roomPreview ? (
-            <img src={roomPreview} alt="Uploaded room" className="furnish-upload__preview" />
-          ) : (
-            <span className="furnish-upload__placeholder">Drop your room photo here or click to browse</span>
-          )}
-        </div>
-
-        <label className="furnish-panel__label">
-          What furniture/appliances do you want?
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="advisor-chat__input"
-            rows={4}
-            placeholder="Example: L-shape gray sofa, oak coffee table, TV console, floor lamp, queen bed, 65-inch TV, compact washer/dryer..."
-          />
-        </label>
-
-        <label className="furnish-panel__label">
-          Product links (optional)
-          <textarea
-            value={productLinksText}
-            onChange={(e) => setProductLinksText(e.target.value)}
-            className="advisor-chat__input"
-            rows={4}
-            placeholder="Paste one link per line. We'll read product title, price, and available dimensions."
-          />
-        </label>
-
-        <label className="furnish-panel__label">
-          Budget currency
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="advisor-upload__select">
-            <option value="CAD">CAD</option>
-            <option value="USD">USD</option>
-            <option value="EUR">EUR</option>
-            <option value="GBP">GBP</option>
-          </select>
-        </label>
-
-        {error && <p className="advisor-upload__error">{error}</p>}
-
-        <button type="button" className="btn btn--primary" onClick={generatePreview} disabled={!roomImage || loading}>
-          {loading ? 'Generating preview...' : 'Generate staged preview + total price'}
-        </button>
-      </section>
-
-      {result && (
-        <section className="furnish-result">
-          <div className="furnish-result__summary">
-            <strong>Total:</strong> {formatMoney(result.totalPrice, result.currency)}
-            {result.missingPriceCount > 0 && ` (${result.missingPriceCount} item(s) estimated or missing price)`}
+            onDragLeave={(e) => {
+              e.preventDefault()
+              e.currentTarget.classList.remove('furnish-upload--drag')
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.currentTarget.classList.remove('furnish-upload--drag')
+              onSelectImage(e.dataTransfer.files, 'room')
+            }}
+          >
+            <input
+              ref={roomInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                onSelectImage(e.target.files, 'room')
+                e.currentTarget.value = ''
+              }}
+              className="furnish-upload__input"
+            />
+            {roomPreview ? (
+              <img src={roomPreview} alt="Uploaded unit" className="furnish-upload__preview" />
+            ) : (
+              <span className="furnish-upload__placeholder">Drop your room photo here or click to browse</span>
+            )}
           </div>
 
-          <p className="furnish-result__text">{result.summary}</p>
+          <label className="furnish-panel__label">Floor plan (optional, improves spacing analysis)</label>
+          <div
+            className="furnish-upload"
+            onClick={() => floorPlanInputRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.currentTarget.classList.add('furnish-upload--drag')
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault()
+              e.currentTarget.classList.remove('furnish-upload--drag')
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.currentTarget.classList.remove('furnish-upload--drag')
+              onSelectImage(e.dataTransfer.files, 'floorPlan')
+            }}
+          >
+            <input
+              ref={floorPlanInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                onSelectImage(e.target.files, 'floorPlan')
+                e.currentTarget.value = ''
+              }}
+              className="furnish-upload__input"
+            />
+            {floorPlanPreview ? (
+              <img src={floorPlanPreview} alt="Uploaded floor plan" className="furnish-upload__preview" />
+            ) : (
+              <span className="furnish-upload__placeholder">Optional: upload floor plan image</span>
+            )}
+          </div>
+
+          <label className="furnish-panel__label">What do you want? (chat starter)</label>
+          <textarea
+            value={initialRequest}
+            onChange={(e) => setInitialRequest(e.target.value)}
+            className="advisor-chat__input"
+            rows={4}
+            placeholder="Example: Modern cozy living room, 3-seat sofa, coffee table, TV stand, floor lamp, rug."
+          />
+
+          <label className="furnish-panel__label">Direct product links (optional)</label>
+          <textarea
+            value={linksText}
+            onChange={(e) => setLinksText(e.target.value)}
+            className="advisor-chat__input"
+            rows={3}
+            placeholder="Paste links (IKEA links recommended)."
+          />
+
+          {error && <p className="advisor-upload__error">{error}</p>}
+
+          <button type="button" className="btn btn--primary" onClick={startSession} disabled={!canStart || loading}>
+            {loading ? 'Starting...' : 'Start furnishing chat'}
+          </button>
+        </section>
+      )}
+
+      {sessionId && result && (
+        <section className="furnish-result">
+          <div className="furnish-result__toolbar">
+            <div className="furnish-result__summary">
+              <strong>Total:</strong> {formatMoney(result.totalPrice, currentCurrency)}
+              {result.missingPriceCount > 0 && ` (${result.missingPriceCount} item(s) missing price)`}
+            </div>
+            <button type="button" className="btn btn--secondary" onClick={resetSession} disabled={loading}>
+              Start new session
+            </button>
+          </div>
+
+          <div className="furnish-result__meta">
+            <span>Room estimate: {result.roomProfile.estimatedAreaSqm ? `${result.roomProfile.estimatedAreaSqm.toFixed(1)} sqm` : 'N/A'}</span>
+            <span>Spacing: {normalizeFitLabel(result.spacing.fitStatus)}</span>
+            {typeof result.spacing.coverageRatio === 'number' && (
+              <span>Coverage: {(result.spacing.coverageRatio * 100).toFixed(1)}%</span>
+            )}
+          </div>
 
           <div className="furnish-images">
             {roomPreview && (
               <figure className="furnish-images__card">
-                <figcaption>Original unit photo</figcaption>
-                <img src={roomPreview} alt="Original unit" />
+                <figcaption>Original room</figcaption>
+                <img src={roomPreview} alt="Original room" />
               </figure>
             )}
             {result.previewImageDataUrl ? (
               <figure className="furnish-images__card">
-                <figcaption>AI staged preview</figcaption>
-                <img src={result.previewImageDataUrl} alt="AI staged preview" />
+                <figcaption>Updated staged preview</figcaption>
+                <img src={result.previewImageDataUrl} alt="Staged preview" />
               </figure>
             ) : (
               <div className="furnish-images__card furnish-images__card--empty">
                 <strong>Preview unavailable</strong>
-                <span>Itemized furniture list is still calculated below.</span>
+                <span>Product list and spacing checks are still available below.</span>
               </div>
             )}
           </div>
@@ -318,74 +542,143 @@ export default function FurnishingPreview() {
                 <tr>
                   <th>Item</th>
                   <th>Qty</th>
-                  <th>Unit price</th>
+                  <th>Unit</th>
                   <th>Subtotal</th>
-                  <th>Source</th>
+                  <th>Link</th>
                 </tr>
               </thead>
               <tbody>
-                {result.items.map((item, index) => (
-                  <tr key={`${item.name}-${index}`}>
-                    <td>
-                      <div className="furnish-item-name">{item.name}</div>
-                      {item.dimensions && <div className="furnish-item-meta">Size: {item.dimensions}</div>}
-                      {item.notes && <div className="furnish-item-meta">{item.notes}</div>}
-                    </td>
-                    <td>{item.quantity}</td>
-                    <td>{formatMoney(item.unitPrice, item.currency)}</td>
-                    <td>{formatMoney(item.subtotal, item.currency)}</td>
-                    <td>
-                      {item.link ? (
-                        <a href={item.link} target="_blank" rel="noreferrer">Product link</a>
-                      ) : (
-                        <span>{item.source}</span>
-                      )}
-                      {item.estimatedPrice && <div className="furnish-item-meta">Estimated price</div>}
-                    </td>
-                  </tr>
-                ))}
+                {result.selectedItems.map((item) => {
+                  const dims = formatDims(item)
+                  return (
+                    <tr key={`${item.slotId}-${item.optionId}`}>
+                      <td>
+                        <div className="furnish-item-name">{item.name}</div>
+                        <div className="furnish-item-meta">{item.slotLabel}</div>
+                        {dims && <div className="furnish-item-meta">Size: {dims}</div>}
+                      </td>
+                      <td>{item.quantity}</td>
+                      <td>{formatMoney(item.unitPrice, item.currency)}</td>
+                      <td>{formatMoney(item.subtotal, item.currency)}</td>
+                      <td><a href={item.url} target="_blank" rel="noreferrer">Open product</a></td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
 
-          {result.assumptions.length > 0 && (
-            <div className="furnish-assumptions">
-              <h3>Assumptions</h3>
+          {sortedSlots.length > 0 && (
+            <div className="furnish-slots">
+              <h3>Similar options from IKEA</h3>
+              {sortedSlots.map((slot) => (
+                <article key={slot.slotId} className="furnish-slot">
+                  <header className="furnish-slot__header">
+                    <div>
+                      <strong>{slot.label}</strong>
+                      <div className="furnish-item-meta">
+                        Query: {slot.searchQuery} | Qty: {slot.quantity}
+                      </div>
+                      {slot.constraints && <div className="furnish-item-meta">Constraint: {slot.constraints}</div>}
+                    </div>
+                  </header>
+
+                  <div className="furnish-slot__options">
+                    {slot.options.map((option) => {
+                      const selected = slot.selectedOptionId === option.optionId
+                      const dims = formatDims(option)
+                      return (
+                        <div
+                          key={option.optionId}
+                          className={`furnish-option${selected ? ' furnish-option--selected' : ''}`}
+                        >
+                          {option.imageUrl ? (
+                            <img src={option.imageUrl} alt={option.name} className="furnish-option__image" />
+                          ) : (
+                            <div className="furnish-option__image furnish-option__image--placeholder">No image</div>
+                          )}
+                          <div className="furnish-option__body">
+                            <div className="furnish-option__name">{option.name}</div>
+                            <div className="furnish-item-meta">{formatMoney(option.unitPrice, option.currency)}</div>
+                            {dims && <div className="furnish-item-meta">{dims}</div>}
+                            <div className="furnish-option__actions">
+                              <a href={option.url} target="_blank" rel="noreferrer">Product link</a>
+                              <button
+                                type="button"
+                                className="btn btn--secondary"
+                                disabled={loading || selected}
+                                onClick={() => selectOption(slot, option)}
+                              >
+                                {selected ? 'Selected' : 'Choose this'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {(result.spacing.notes.length > 0 || result.roomProfile.notes.length > 0 || result.notes.length > 0) && (
+            <div className="furnish-links">
+              <h3>Spacing and system notes</h3>
               <ul>
-                {result.assumptions.map((assumption, i) => (
-                  <li key={`${assumption}-${i}`}>{assumption}</li>
+                {result.spacing.notes.map((note, index) => (
+                  <li key={`spacing-${index}`}>{note}</li>
+                ))}
+                {result.roomProfile.notes.map((note, index) => (
+                  <li key={`room-${index}`}>{note}</li>
+                ))}
+                {result.notes.map((note, index) => (
+                  <li key={`system-${index}`}>{note}</li>
                 ))}
               </ul>
             </div>
           )}
 
-          {result.sourceProducts.length > 0 && (
-            <div className="furnish-links">
-              <h3>Link parsing status</h3>
-              <ul>
-                {result.sourceProducts.map((product, i) => (
-                  <li key={`${product.link}-${i}`}>
-                    <a href={product.link} target="_blank" rel="noreferrer">{product.title || product.link}</a>
-                    {' - '}
-                    {product.status === 'ok' ? 'parsed' : `error: ${product.error || 'unknown error'}`}
-                  </li>
-                ))}
-              </ul>
+          <div className="advisor-chat">
+            <h3>Continue in chat</h3>
+            <div className="advisor-chat__messages">
+              {messages.map((message, idx) => (
+                <div
+                  key={`${message.role}-${idx}`}
+                  className={`advisor-chat__msg ${message.role === 'user' ? 'advisor-chat__msg--user' : 'advisor-chat__msg--assistant'}`}
+                >
+                  <div className="advisor-chat__role">{message.role === 'user' ? 'You' : 'Assistant'}</div>
+                  <div className="advisor-chat__content">{message.content}</div>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
             </div>
-          )}
 
-          {result.notes.length > 0 && (
-            <div className="furnish-links">
-              <h3>System notes</h3>
-              <ul>
-                {result.notes.map((note, i) => (
-                  <li key={`${note}-${i}`}>{note}</li>
-                ))}
-              </ul>
+            <div className="advisor-chat__input-wrap">
+              <textarea
+                className="advisor-chat__input"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                rows={3}
+                placeholder="Example: replace sofa with a smaller one under 220cm wide, and add a side table."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    void sendChat()
+                  }
+                }}
+              />
+              <div className="advisor-chat__actions">
+                <button type="button" className="btn btn--primary" onClick={sendChat} disabled={loading || !chatInput.trim()}>
+                  {loading ? 'Updating...' : 'Send'}
+                </button>
+              </div>
             </div>
-          )}
+          </div>
         </section>
       )}
+
+      {!sessionId && error && <p className="advisor-upload__error">{error}</p>}
     </div>
   )
 }

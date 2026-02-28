@@ -83,6 +83,12 @@ const MAX_IMAGE_DIMENSION = 1400
 const JPEG_QUALITY = 0.82
 const MAX_IMAGES_PER_BOX = 8
 
+function parsePositiveNumber(value: string): number | undefined {
+  const normalized = Number(value.replace(/,/g, '').trim())
+  if (!Number.isFinite(normalized) || normalized <= 0) return undefined
+  return normalized
+}
+
 function processImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -268,6 +274,9 @@ export default function Advisor() {
     setStreamingContent('')
 
     try {
+      const interiorArea = parsePositiveNumber(interiorAreaSqft)
+      const landArea = parsePositiveNumber(landAreaSqft)
+
       const res = await fetch(`${apiBase}/api/advisor/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
