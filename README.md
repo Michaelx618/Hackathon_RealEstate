@@ -1,6 +1,20 @@
 # Hackathon App
 
-React + Vite frontend with Node.js Express backend.
+React + Vite frontend and Node.js Express backend, both in **TypeScript**.
+
+## TypeScript configs
+
+| File | Purpose |
+|------|--------|
+| **Frontend** | |
+| `frontend/tsconfig.json` | Main TS config: strict mode, React JSX, ESNext modules, `src` only. |
+| `frontend/tsconfig.node.json` | Config for Vite config file (`vite.config.ts`) only. |
+| `frontend/src/vite-env.d.ts` | Vite client types (e.g. `import.meta.env`, asset imports). |
+| **Backend** | |
+| `backend/tsconfig.json` | Node/Express: ES2022, NodeNext modules, strict, output to `dist/`. |
+
+**Frontend:** Vite compiles TS on the fly; no separate `tsc` step for dev.  
+**Backend:** `npm run dev` uses `tsx` to run `server.ts` directly; `npm run build` runs `tsc` to emit `dist/`.
 
 ## Push to GitHub
 
@@ -34,5 +48,6 @@ The frontend proxies `/api` requests to the backend in development.
 |----------|-------------|--------------------|
 | frontend | `npm run dev` | Vite dev server   |
 | frontend | `npm run build` | Production build |
-| backend  | `npm run dev` | Express with watch |
-| backend  | `npm start`   | Run server        |
+| backend  | `npm run dev` | Run server with tsx (no build) |
+| backend  | `npm run build` | Compile TS to `dist/` |
+| backend  | `npm start`   | Run compiled server |
