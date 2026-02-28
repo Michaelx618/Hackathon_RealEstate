@@ -41,6 +41,8 @@ Output must be valid JSON only (no markdown, no prose outside JSON) with this ex
 Rules:
 - Keep item list practical for a single room/unit setup.
 - Prefer product-link prices when provided.
+- When the user has supplied parsed product-link data (e.g. IKEA or other store URLs), you MUST match each such product to an item: set "source" to "link" and set "link" to the exact product URL from the parsed list (the numbered link, e.g. "1. https://..."). This ensures the SOURCE column shows a clickable product link.
+- For items that do not come from any supplied link, set "source" to "description" and "link" to "".
 - If a needed item has no known price, estimate a realistic mid-market price and set estimatedPrice=true.
 - Quantity must be positive integers.
 - designPrompt must explicitly ask to preserve room geometry/perspective and place requested items in realistic scale.

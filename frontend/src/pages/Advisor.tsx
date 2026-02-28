@@ -4,11 +4,15 @@ import { ADVISOR_QUESTIONS, buildGoalFromAnswers, type AdvisorAnswers } from '..
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
-type Step = 'upload' | 'questions'
-
 type ImageBatch = {
   previews: string[]
   encoded: string[]
+}
+
+type AdvisorRenderResult = {
+  previewImageDataUrl?: string
+  prompt?: string
+  notes?: string[]
 }
 
 function extractFirst(text: string, patterns: RegExp[]): string | null {
@@ -82,6 +86,7 @@ const MAX_FILE_SIZE_MB = 10
 const MAX_IMAGE_DIMENSION = 1400
 const JPEG_QUALITY = 0.82
 const MAX_IMAGES_PER_BOX = 8
+const MAX_RENDER_REFERENCE_UPLOAD = 4
 
 function processImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -147,18 +152,23 @@ export default function Advisor() {
 
   const [currentHouseStatus, setCurrentHouseStatus] = useState('')
   const [location, setLocation] = useState('')
-  const [step, setStep] = useState<Step>('upload')
   const [answers, setAnswers] = useState<AdvisorAnswers>({})
 
   const [loading, setLoading] = useState(false)
+  const [rendering, setRendering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
+  const [previewImageDataUrl, setPreviewImageDataUrl] = useState<string | null>(null)
+  const [previewNotes, setPreviewNotes] = useState<string[]>([])
+  const [pendingReferencePreviews, setPendingReferencePreviews] = useState<string[]>([])
+  const [pendingReferenceImages, setPendingReferenceImages] = useState<string[]>([])
 
   const [searchParams] = useSearchParams()
   const chatEndRef = useRef<HTMLDivElement>(null)
   const currentImageInputRef = useRef<HTMLInputElement>(null)
   const targetImageInputRef = useRef<HTMLInputElement>(null)
+  const renderReferenceInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const loc = searchParams.get('location')
@@ -253,9 +263,70 @@ export default function Advisor() {
     }
   }
 
+  const addRenderReferenceImages = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return
+
+    const slotsLeft = MAX_RENDER_REFERENCE_UPLOAD - pendingReferenceImages.length
+    if (slotsLeft <= 0) {
+      setError(`You can add up to ${MAX_RENDER_REFERENCE_UPLOAD} annotated reference image(s) per edit turn.`)
+      return
+    }
+
+    try {
+      const selected = Array.from(fileList).slice(0, slotsLeft)
+      const batch = await processImageFiles(selected, 'Reference image')
+      setPendingReferencePreviews((prev) => [...prev, ...batch.previews])
+      setPendingReferenceImages((prev) => [...prev, ...batch.encoded])
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to process reference images.')
+    }
+  }
+
+  const renderPreview = async (
+    sid: string,
+    instruction?: string,
+    referenceImages?: string[],
+  ): Promise<boolean> => {
+    setRendering(true)
+    try {
+      const res = await fetch(`${apiBase}/api/advisor/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sid,
+          instruction: instruction?.trim() || undefined,
+          referenceImages: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        const msg = data?.error as string | undefined
+        throw new Error(msg || `Render request failed: ${res.status}`)
+      }
+
+      const data = await res.json() as AdvisorRenderResult
+      if (data.previewImageDataUrl) {
+        setPreviewImageDataUrl(data.previewImageDataUrl)
+      }
+      setPreviewNotes(Array.isArray(data.notes) ? data.notes : [])
+      return true
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to render renovation preview.')
+      return false
+    } finally {
+      setRendering(false)
+    }
+  }
+
   const startSession = async () => {
     if (currentImagesBase64.length === 0) {
       setError('Please upload at least one current house photo first.')
+      return
+    }
+    if (!location.trim()) {
+      setError('Please enter property address/location first.')
       return
     }
 
@@ -294,7 +365,10 @@ export default function Advisor() {
       }
 
       const sid = res.headers.get('X-Session-Id')
-      if (sid) setSessionId(sid)
+      if (!sid) {
+        throw new Error('Session ID missing from advisor response.')
+      }
+      setSessionId(sid)
 
       const header = `[${answers.propertyType || 'House'} | Current images: ${currentImagesBase64.length} | Target images: ${targetImagesBase64.length}]`
       const userText = `Goal (from questionnaire): ${fullMessage}`
@@ -314,6 +388,8 @@ export default function Advisor() {
         setMessages((prev) => [...prev, { role: 'assistant', content }])
         setStreamingContent('')
       }
+
+      await renderPreview(sid, fullMessage)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
@@ -324,6 +400,7 @@ export default function Advisor() {
   const sendMessage = async () => {
     const text = input.trim()
     if (!text || !sessionId) return
+    const pendingRefsForTurn = [...pendingReferenceImages]
 
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: text }])
@@ -362,6 +439,13 @@ export default function Advisor() {
         setMessages((prev) => [...prev, { role: 'assistant', content }])
         setStreamingContent('')
       }
+
+      const renderOk = await renderPreview(sessionId, text, pendingRefsForTurn)
+      if (renderOk && pendingRefsForTurn.length > 0) {
+        setPendingReferenceImages([])
+        setPendingReferencePreviews([])
+        if (renderReferenceInputRef.current) renderReferenceInputRef.current.value = ''
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
@@ -378,12 +462,17 @@ export default function Advisor() {
     setTargetImagesBase64([])
     setCurrentHouseStatus('')
     setLocation('')
-    setStep('upload')
     setAnswers({})
     setStreamingContent('')
+    setRendering(false)
+    setPreviewImageDataUrl(null)
+    setPreviewNotes([])
+    setPendingReferencePreviews([])
+    setPendingReferenceImages([])
     setError(null)
     if (currentImageInputRef.current) currentImageInputRef.current.value = ''
     if (targetImageInputRef.current) targetImageInputRef.current.value = ''
+    if (renderReferenceInputRef.current) renderReferenceInputRef.current.value = ''
   }
 
   const setAnswer = (id: string, value: string) => {
@@ -391,7 +480,7 @@ export default function Advisor() {
   }
 
   return (
-    <div className="page page--advisor">
+    <div className={`page page--advisor${sessionId ? ' page--advisor-workspace' : ''}`}>
       <h1 className="page__title">House renovation cost + return advisor</h1>
       <p className="page__lead">
         Upload your floor plan, answer a few questions about your property and goals, then get a detailed renovation plan with cost and timeline estimates.
@@ -400,13 +489,13 @@ export default function Advisor() {
         Scope is restricted to houses, townhouses, duplexes, and similar house-type properties. Condos and apartments are not supported.
       </p>
 
-      {!sessionId && step === 'upload' && (
+      {!sessionId && (
         <section className="advisor-features" aria-label="How it works">
           <h2 className="advisor-features__title">How it works</h2>
           <ul className="advisor-features__list">
-            <li><strong>Step 1:</strong> Upload your current house photos or floor plan (required). Optionally add target/sketch images.</li>
-            <li><strong>Step 2:</strong> Answer a few multiple-choice questions about your property and goals.</li>
-            <li><strong>Then:</strong> We’ll generate your renovation plan and report with cost and timeline estimates.</li>
+            <li>Complete one intake form: upload photos, provide location, and answer project questions in one page.</li>
+            <li>We generate your renovation plan and return estimate from your inputs and images.</li>
+            <li>You can continue refining assumptions in the chat after the report is generated.</li>
           </ul>
           <div className="advisor-sources">
             <strong>Public data references:</strong>{' '}
@@ -421,10 +510,25 @@ export default function Advisor() {
         </section>
       )}
 
-      {!sessionId && step === 'upload' ? (
-        <section className="advisor-upload">
-          <label className="advisor-upload__label">Step 1 — Upload your floor plan</label>
-          <p className="advisor-upload__hint">Upload one or more photos of your current house or floor plan. Optionally add target/sketch images.</p>
+      {!sessionId ? (
+        <section className="advisor-upload advisor-questions">
+          <h2 className="advisor-questions__title">Project intake</h2>
+          <p className="advisor-questions__intro">
+            Fill out this single form to start your House renovation cost + return report.
+          </p>
+
+          <label className="advisor-upload__label">
+            Property address/location (required)
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. Toronto, ON or M5V 1A1"
+              className="advisor-upload__text"
+            />
+          </label>
+
+          <p className="advisor-upload__hint">Upload one or more current photos or floor plans. Optionally add target/sketch images.</p>
           <label className="advisor-upload__label">Current house photos (required)</label>
           <div
             className="advisor-upload__zone"
@@ -501,34 +605,6 @@ export default function Advisor() {
             )}
           </div>
 
-          {error && <p className="advisor-upload__error">{error}</p>}
-          <div className="advisor-upload__actions">
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => setStep('questions')}
-              disabled={currentImagesBase64.length === 0}
-            >
-              Next: Answer a few questions
-            </button>
-          </div>
-        </section>
-      ) : !sessionId && step === 'questions' ? (
-        <section className="advisor-questions">
-          <h2 className="advisor-questions__title">Step 2 — Tell us about your project</h2>
-          <p className="advisor-questions__intro">Answer these so we can tailor your renovation plan and report.</p>
-
-          <label className="advisor-upload__label">
-            Location (city or ZIP)
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. Toronto, ON or M5V 1A1"
-              className="advisor-upload__text"
-            />
-          </label>
-
           {ADVISOR_QUESTIONS.map((q) => (
             <div key={q.id} className="advisor-question">
               <span className="advisor-question__label">{q.label}</span>
@@ -563,14 +639,11 @@ export default function Advisor() {
 
           {error && <p className="advisor-upload__error">{error}</p>}
           <div className="advisor-questions__actions">
-            <button type="button" className="btn btn--secondary" onClick={() => setStep('upload')}>
-              Back
-            </button>
             <button
               type="button"
               className="btn btn--primary"
               onClick={startSession}
-              disabled={loading}
+              disabled={loading || currentImagesBase64.length === 0 || !location.trim()}
             >
               {loading ? 'Generating your plan…' : 'Generate my plan'}
             </button>
@@ -579,11 +652,55 @@ export default function Advisor() {
       ) : (
         <section className="advisor-chat advisor-report">
           <header className="advisor-report__header">
-            <h2 className="advisor-report__title">Your renovation plan</h2>
-            <p className="advisor-report__subtitle">Based on your floor plan and answers. You can ask follow-up questions in the chat on the right.</p>
+            <div>
+              <h2 className="advisor-report__title">Renovation workspace</h2>
+              <p className="advisor-report__subtitle">
+                Update scope, style, and assumptions in chat. The estimate and visual preview stay in sync.
+              </p>
+            </div>
+            <div className="advisor-report__chips">
+              <span className="advisor-report__chip">Live estimate</span>
+              {loading && <span className="advisor-report__chip advisor-report__chip--active">Updating analysis</span>}
+              {rendering && <span className="advisor-report__chip advisor-report__chip--active">Rendering preview</span>}
+            </div>
           </header>
+
           <div className="advisor-report__layout">
             <aside className="advisor-report__cards">
+              <div className="advisor-visual-card" role="region" aria-label="Renovation visual preview">
+                <div className="advisor-visual-card__head">
+                  <h3 className="advisor-visual-card__title">Design preview</h3>
+                  <span className="advisor-visual-card__badge">AI concept</span>
+                </div>
+
+                {previewImageDataUrl ? (
+                  <img src={previewImageDataUrl} alt="Renovation preview" className="advisor-visual-card__image" />
+                ) : (
+                  <div className="advisor-visual-card__empty">
+                    {rendering ? 'Generating visual preview…' : 'No preview generated yet.'}
+                  </div>
+                )}
+
+                {currentImagePreviews[0] && (
+                  <div className="advisor-visual-card__before">
+                    <span>Original</span>
+                    <img src={currentImagePreviews[0]} alt="Original property" />
+                  </div>
+                )}
+
+                {rendering && <p className="advisor-visual-card__status">Updating preview image…</p>}
+                <p className="advisor-visual-card__meta">
+                  Use chat + optional rough annotations to iteratively shape the design outcome.
+                </p>
+                {previewNotes.length > 0 && (
+                  <ul className="advisor-visual-card__notes">
+                    {previewNotes.map((note, idx) => (
+                      <li key={`${note}-${idx}`}>{note}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
               {(potentialScore !== null || timeline || keyFactors.length > 0) && (
                 <div className="advisor-summary">
                   {potentialScore !== null && (
@@ -597,7 +714,7 @@ export default function Advisor() {
                   )}
                   {timeline && (
                     <div className="advisor-timeline-badge" role="status">
-                      <span className="advisor-timeline-badge__label">Est. timeline</span>
+                      <span className="advisor-timeline-badge__label">Timeline</span>
                       <span className="advisor-timeline-badge__value">{timeline}</span>
                     </div>
                   )}
@@ -616,21 +733,21 @@ export default function Advisor() {
 
               {metricCards.length > 0 && (
                 <div className="advisor-metrics-wrap">
-                  <h3 className="advisor-metrics__title">Prices & returns</h3>
+                  <h3 className="advisor-metrics__title">Cost and return snapshot</h3>
                   <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
                     {metricCards.map((metric) => (
-                    <div className="advisor-metric-card" key={metric.label}>
-                      <span className="advisor-metric-card__label">{metric.label}</span>
-                      <span className="advisor-metric-card__value">{metric.value}</span>
-                    </div>
-                  ))}
+                      <div className="advisor-metric-card" key={metric.label}>
+                        <span className="advisor-metric-card__label">{metric.label}</span>
+                        <span className="advisor-metric-card__value">{metric.value}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
               {phases.length > 0 && (
                 <div className="advisor-timeline" role="region" aria-label="Renovation plan phases">
-                  <h3 className="advisor-timeline__title">Renovation plan</h3>
+                  <h3 className="advisor-timeline__title">Execution phases</h3>
                   <div className="advisor-timeline__graph">
                     {phases.map((p, i) => (
                       <div key={p.phase} className="advisor-timeline__phase">
@@ -645,64 +762,151 @@ export default function Advisor() {
             </aside>
 
             <div className="advisor-report__chat">
-          <div className="advisor-chat__messages">
-            {messages.map((m, i) => (
-              <div key={i} className={`advisor-chat__msg advisor-chat__msg--${m.role}`}>
-                <span className="advisor-chat__role">{m.role === 'user' ? 'You' : 'Advisor'}</span>
-                <div className="advisor-chat__content">{m.content}</div>
-              </div>
-            ))}
-            {streamingContent && (
-              <div className="advisor-chat__msg advisor-chat__msg--assistant">
-                <span className="advisor-chat__role">Advisor</span>
-                <div className="advisor-chat__content">{streamingContent}</div>
-              </div>
-            )}
-            <div ref={chatEndRef} />
-          </div>
+              <section className="advisor-chat-panel">
+                <div className="advisor-chat-panel__header">
+                  <h3>Conversation</h3>
+                  <span>Refine assumptions and design direction</span>
+                </div>
 
-          {error && <p className="advisor-chat__error">{error}</p>}
+                <div className="advisor-chat__messages">
+                  {messages.map((m, i) => (
+                    <div key={i} className={`advisor-chat__msg advisor-chat__msg--${m.role}`}>
+                      <span className="advisor-chat__role">{m.role === 'user' ? 'You' : 'Advisor'}</span>
+                      <div className="advisor-chat__content">{m.content}</div>
+                    </div>
+                  ))}
+                  {streamingContent && (
+                    <div className="advisor-chat__msg advisor-chat__msg--assistant">
+                      <span className="advisor-chat__role">Advisor</span>
+                      <div className="advisor-chat__content">{streamingContent}</div>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+              </section>
 
-          <div className="advisor-chat__input-wrap">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  sendMessage()
-                }
-              }}
-              placeholder="Ask for scenario changes, sensitivity checks, or more precise assumptions..."
-              className="advisor-chat__input"
-              rows={4}
-              disabled={loading}
-            />
-            <div className="advisor-chat__actions">
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={sendMessage}
-                disabled={!input.trim() || loading}
-              >
-                {loading ? 'Thinking…' : 'Send'}
-              </button>
-              {allAssistantText && (
-                <button
-                  type="button"
-                  className="btn btn--secondary"
-                  onClick={() => {
-                    navigator.clipboard.writeText(allAssistantText).then(() => alert('Estimate copied to clipboard.'))
-                  }}
-                >
-                  Copy estimate
-                </button>
-              )}
-              <button type="button" className="btn btn--secondary" onClick={reset}>
-                New project
-              </button>
-            </div>
-          </div>
+              {error && <p className="advisor-chat__error">{error}</p>}
+
+              <section className="advisor-composer">
+                <h3 className="advisor-composer__title">Edit design and estimate</h3>
+
+                <div className="advisor-render-input">
+                  <label className="advisor-upload__label">Rough annotated/reference images for next preview update (optional)</label>
+                  <div
+                    className="advisor-upload__zone advisor-upload__zone--compact"
+                    onClick={() => renderReferenceInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('advisor-upload__zone--drag') }}
+                    onDragLeave={(e) => { e.preventDefault(); e.currentTarget.classList.remove('advisor-upload__zone--drag') }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      e.currentTarget.classList.remove('advisor-upload__zone--drag')
+                      addRenderReferenceImages(e.dataTransfer.files)
+                    }}
+                  >
+                    <input
+                      ref={renderReferenceInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => {
+                        addRenderReferenceImages(e.target.files)
+                        e.currentTarget.value = ''
+                      }}
+                      className="advisor-upload__input"
+                      aria-label="Upload annotated reference images"
+                    />
+                    {pendingReferencePreviews.length > 0 ? (
+                      <>
+                        <div className="advisor-upload__gallery">
+                          {pendingReferencePreviews.map((preview, idx) => (
+                            <img key={`${preview.slice(0, 30)}-${idx}`} src={preview} alt={`Reference ${idx + 1}`} className="advisor-upload__thumb" />
+                          ))}
+                        </div>
+                        <span className="advisor-upload__count">{pendingReferencePreviews.length} pending reference image(s)</span>
+                      </>
+                    ) : (
+                      <span className="advisor-upload__placeholder">Drop rough annotated images here or click to browse</span>
+                    )}
+                  </div>
+                  {pendingReferenceImages.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn--secondary"
+                      onClick={() => {
+                        setPendingReferenceImages([])
+                        setPendingReferencePreviews([])
+                        if (renderReferenceInputRef.current) renderReferenceInputRef.current.value = ''
+                      }}
+                    >
+                      Clear pending references
+                    </button>
+                  )}
+                </div>
+
+                <div className="advisor-chat__input-wrap">
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void sendMessage()
+                      }
+                    }}
+                    placeholder="Example: keep kitchen layout, switch to light oak cabinets, and update ROI for a medium renovation scope."
+                    className="advisor-chat__input"
+                    rows={4}
+                    disabled={loading || rendering}
+                  />
+                  <div className="advisor-chat__actions">
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={sendMessage}
+                      disabled={!input.trim() || loading || rendering}
+                    >
+                      {loading ? 'Thinking…' : (rendering ? 'Updating preview…' : 'Send + update preview')}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--secondary"
+                      disabled={rendering || loading || !sessionId}
+                      onClick={() => {
+                        if (!sessionId) return
+                        void renderPreview(
+                          sessionId,
+                          input.trim() || 'Refresh preview with the latest renovation plan.',
+                          pendingReferenceImages,
+                        ).then((ok) => {
+                          if (ok && pendingReferenceImages.length > 0) {
+                            setPendingReferenceImages([])
+                            setPendingReferencePreviews([])
+                            if (renderReferenceInputRef.current) renderReferenceInputRef.current.value = ''
+                          }
+                        })
+                      }}
+                    >
+                      {rendering ? 'Rendering…' : 'Refresh preview only'}
+                    </button>
+                  </div>
+                  <div className="advisor-chat__actions advisor-chat__actions--utility">
+                    {allAssistantText && (
+                      <button
+                        type="button"
+                        className="btn btn--secondary"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(allAssistantText)
+                        }}
+                      >
+                        Copy estimate
+                      </button>
+                    )}
+                    <button type="button" className="btn btn--secondary" onClick={reset}>
+                      New project
+                    </button>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
         </section>
