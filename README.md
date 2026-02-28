@@ -2,6 +2,17 @@
 
 React + Vite frontend with Node.js Express backend.
 
+## Push to GitHub
+
+1. Create a new repository on [GitHub](https://github.com/new) (do not add a README or .gitignore).
+2. Then run:
+
+```bash
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+git branch -M main
+git push -u origin main
+```
+
 ## Setup
 
 ```bash
