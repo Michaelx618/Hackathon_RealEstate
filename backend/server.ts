@@ -7,6 +7,7 @@ import fs from 'fs';
 import {
   createSession,
   getSession,
+  renderAdvisorPreview,
   streamFirstReply,
   streamChatReply,
 } from './advisor.js';
@@ -15,10 +16,6 @@ import {
   createFurnishingSession,
   getFurnishingSession,
   runFurnishingTurn,
-} from './furnishing-chat.js';
-import type {
-  FurnishingChatAction,
-  FurnishingSessionInput,
 } from './furnishing-chat.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -103,29 +100,24 @@ function sanitizeUrlArray(value: unknown, max = 8): string[] {
   return urls.slice(0, max);
 }
 
-function sanitizeFurnishingAction(value: unknown): FurnishingChatAction | undefined {
+function sanitizeFurnishingAction(value: unknown):
+  | { type: 'select_option'; slotId: string; optionId: string }
+  | { type: 'clear_slot'; slotId: string }
+  | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const action = value as Record<string, unknown>;
   const type = optionalString(action.type);
   const slotId = optionalString(action.slotId);
-
   if (!slotId) return undefined;
 
   if (type === 'select_option') {
     const optionId = optionalString(action.optionId);
     if (!optionId) return undefined;
-    return {
-      type: 'select_option',
-      slotId,
-      optionId,
-    };
+    return { type: 'select_option', slotId, optionId };
   }
 
   if (type === 'clear_slot') {
-    return {
-      type: 'clear_slot',
-      slotId,
-    };
+    return { type: 'clear_slot', slotId };
   }
 
   return undefined;
@@ -160,27 +152,24 @@ app.post('/api/furnishing/preview', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Missing room image (base64/data URL image required)' });
       return;
     }
-
     const location = optionalString(body.location);
     if (!location) {
       res.status(400).json({ error: 'Missing property address/location (required for localized product pricing).' });
       return;
     }
 
-    const productLinks = sanitizeUrlArray(body.productLinks);
+    const productLinks = sanitizeUrlArray(body.productLinks, 10);
     const requestText = optionalString(body.requestText)
       || optionalString(body.description)
       || optionalString(body.prompt);
 
-    const sessionInput: FurnishingSessionInput = {
+    const sessionId = createFurnishingSession({
       roomImage,
       floorPlanImage: optionalString(body.floorPlanImage),
       location,
       firstMessage: requestText,
       productLinks,
-    };
-
-    const sessionId = createFurnishingSession(sessionInput);
+    });
     const result = await runFurnishingTurn(sessionId, {
       message: requestText,
       productLinks,
@@ -365,6 +354,41 @@ app.post('/api/advisor/chat', async (req: Request, res: Response) => {
     console.error('Advisor chat error:', err);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Failed to get reply' });
+    }
+  }
+});
+
+app.post('/api/advisor/render', async (req: Request, res: Response) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      res.status(503).json({ error: 'Advisor is not configured (missing OPENAI_API_KEY)' });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const sessionId = optionalString(body.sessionId);
+    const instruction = optionalString(body.instruction) || optionalString(body.message);
+    const referenceImages = sanitizeImageArray(body.referenceImages, 4);
+
+    if (!sessionId) {
+      res.status(400).json({ error: 'Missing sessionId' });
+      return;
+    }
+    if (!getSession(sessionId)) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    const result = await renderAdvisorPreview(sessionId, {
+      instruction,
+      referenceImages,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Advisor render error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to render advisor preview image' });
     }
   }
 });

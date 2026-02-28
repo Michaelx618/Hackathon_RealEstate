@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
-import OpenAI from 'openai';
-import type { Response } from 'express';
+import OpenAI, { toFile } from 'openai';
+import type { Response as ExpressResponse } from 'express';
 import pdfParse from 'pdf-parse';
 
 function getOpenAI(): OpenAI {
@@ -96,6 +96,9 @@ type Session = {
   messages: Message[];
   context: AdvisorSessionInput;
   firstUserMultimodal?: OpenAI.Chat.Completions.ChatCompletionContentPart[];
+  latestRenderImageDataUrl?: string;
+  latestRenderPrompt?: string;
+  latestRenderNotes?: string[];
 };
 
 type PreparedDocuments = {
@@ -110,6 +113,13 @@ const MAX_DOC_IMAGE_COUNT = 4;
 const MAX_TEXT_CHARS_PER_DOC = 7000;
 const MAX_CURRENT_IMAGES_IN_PROMPT = 6;
 const MAX_TARGET_IMAGES_IN_PROMPT = 6;
+const MAX_RENDER_REFERENCE_IMAGES = 4;
+
+export type AdvisorRenderResult = {
+  previewImageDataUrl?: string;
+  prompt: string;
+  notes: string[];
+};
 
 function normalizeImageUrl(image: string): string {
   if (image.startsWith('data:')) return image;
@@ -138,6 +148,75 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } | 
   } catch {
     return null;
   }
+}
+
+async function toImageFileFromDataUrl(dataUrl: string, fileName: string): Promise<File> {
+  const decoded = decodeDataUrl(normalizeImageUrl(dataUrl));
+  if (!decoded) throw new Error('Invalid image payload');
+  return toFile(decoded.buffer, fileName, { type: decoded.mimeType });
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; HomeKeyBot/1.0)',
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function mergeUniqueImages(current: string[] | undefined, incoming: string[], max: number): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (value: string): void => {
+    const normalized = normalizeImageUrl(value);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    merged.push(normalized);
+  };
+
+  for (const value of current || []) push(value);
+  for (const value of incoming) push(value);
+
+  return merged.slice(0, max);
+}
+
+function buildRenderPrompt(session: Session, instruction?: string): string {
+  const latestAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant')?.content;
+  const renderLines: string[] = [
+    'Preserve the room geometry, camera perspective, and architectural structure from the base image.',
+    'Apply a realistic post-renovation visual update aligned with the owner intent and constraints.',
+    'Keep scale, circulation, and lighting believable and buildable.',
+  ];
+
+  if (session.context.location?.trim()) {
+    renderLines.push(`Property location: ${session.context.location.trim()}.`);
+  }
+  if (session.context.propertyType?.trim()) {
+    renderLines.push(`Property type: ${session.context.propertyType.trim()}.`);
+  }
+  if (session.context.currentHouseStatus?.trim()) {
+    renderLines.push(`Current condition notes: ${session.context.currentHouseStatus.trim()}`);
+  }
+  if (session.context.firstMessage?.trim()) {
+    renderLines.push(`Original owner goal: ${truncate(session.context.firstMessage.trim(), 450)}`);
+  }
+  if (instruction?.trim()) {
+    renderLines.push(`Latest edit instruction: ${truncate(instruction.trim(), 450)}`);
+  }
+  if (latestAssistant?.trim()) {
+    renderLines.push(`Renovation advisor context: ${truncate(latestAssistant.trim(), 650)}`);
+  }
+
+  renderLines.push('If reference/annotated images are provided, use them as renovation/style/layout direction.');
+  return renderLines.join('\n\n');
 }
 
 async function prepareSupportingDocuments(docs: AdvisorDocumentInput[] | undefined): Promise<PreparedDocuments> {
@@ -337,6 +416,9 @@ export function createSession(input: AdvisorSessionInput): string {
       desiredRentableSqft: input.desiredRentableSqft,
       renovationLevel: input.renovationLevel,
     },
+    latestRenderImageDataUrl: undefined,
+    latestRenderPrompt: undefined,
+    latestRenderNotes: [],
   });
 
   return sessionId;
@@ -355,7 +437,7 @@ export function appendMessage(sessionId: string, role: 'user' | 'assistant', con
 export async function streamFirstReply(
   sessionId: string,
   firstMessage: string | undefined,
-  res: Response,
+  res: ExpressResponse,
 ): Promise<string> {
   const session = sessions.get(sessionId);
   if (!session) {
@@ -394,7 +476,7 @@ export async function streamFirstReply(
   return fullContent;
 }
 
-export async function streamChatReply(sessionId: string, userMessage: string, res: Response): Promise<void> {
+export async function streamChatReply(sessionId: string, userMessage: string, res: ExpressResponse): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) {
     res.status(404).json({ error: 'Session not found' });
@@ -429,4 +511,95 @@ export async function streamChatReply(sessionId: string, userMessage: string, re
   res.end();
 
   session.messages.push({ role: 'assistant', content: fullContent });
+}
+
+export async function renderAdvisorPreview(
+  sessionId: string,
+  input?: { instruction?: string; referenceImages?: string[] },
+): Promise<AdvisorRenderResult> {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    throw new Error('Session not found');
+  }
+
+  const incomingReferences = (input?.referenceImages || [])
+    .map((image) => image?.trim())
+    .filter((image): image is string => Boolean(image))
+    .map((image) => normalizeImageUrl(image));
+
+  if (incomingReferences.length > 0) {
+    session.context.targetImages = mergeUniqueImages(
+      session.context.targetImages,
+      incomingReferences,
+      MAX_TARGET_IMAGES_IN_PROMPT,
+    );
+  }
+
+  const baseImage = session.latestRenderImageDataUrl
+    || session.context.currentImages?.[0]
+    || session.context.currentImage;
+  if (!baseImage) {
+    throw new Error('No base image available for rendering');
+  }
+
+  const files: File[] = [await toImageFileFromDataUrl(baseImage, 'advisor-base.jpg')];
+  const references = (session.context.targetImages || [])
+    .slice(0, MAX_RENDER_REFERENCE_IMAGES);
+
+  for (const [index, image] of references.entries()) {
+    try {
+      files.push(await toImageFileFromDataUrl(image, `advisor-reference-${index + 1}.jpg`));
+    } catch {
+      // Ignore invalid reference images.
+    }
+  }
+
+  const prompt = buildRenderPrompt(session, input?.instruction);
+  const notes: string[] = [];
+
+  try {
+    const generated = await getOpenAI().images.edit({
+      model: 'gpt-image-1',
+      image: files,
+      prompt,
+      size: '1536x1024',
+      quality: 'medium',
+      output_format: 'png',
+    });
+
+    const first = generated.data?.[0];
+    if (first?.b64_json) {
+      const previewImageDataUrl = `data:image/png;base64,${first.b64_json}`;
+      session.latestRenderImageDataUrl = previewImageDataUrl;
+      session.latestRenderPrompt = prompt;
+      session.latestRenderNotes = notes;
+      return { previewImageDataUrl, prompt, notes };
+    }
+
+    if (first?.url) {
+      const fetched = await fetchWithTimeout(first.url, 12000);
+      if (fetched.ok) {
+        const contentType = fetched.headers.get('content-type')?.split(';')[0] || 'image/png';
+        const buffer = Buffer.from(await fetched.arrayBuffer());
+        const previewImageDataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
+        session.latestRenderImageDataUrl = previewImageDataUrl;
+        session.latestRenderPrompt = prompt;
+        session.latestRenderNotes = notes;
+        return { previewImageDataUrl, prompt, notes };
+      }
+      notes.push(`Failed to fetch generated preview image (HTTP ${fetched.status}).`);
+    } else {
+      notes.push('Image generation returned no image payload.');
+    }
+  } catch (error) {
+    notes.push(`Preview generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+
+  session.latestRenderPrompt = prompt;
+  session.latestRenderNotes = notes;
+  return {
+    previewImageDataUrl: session.latestRenderImageDataUrl,
+    prompt,
+    notes,
+  };
 }
