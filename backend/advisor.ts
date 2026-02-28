@@ -3,7 +3,11 @@ import OpenAI from 'openai';
 import type { Response } from 'express';
 import pdfParse from 'pdf-parse';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI(): OpenAI {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error('OPENAI_API_KEY is not set');
+  return new OpenAI({ apiKey: key });
+}
 
 const SYSTEM_PROMPT = `You are a renovation, construction-cost, and rental-return advisor.
 
@@ -330,7 +334,7 @@ export async function streamFirstReply(
   res.setHeader('Transfer-Encoding', 'chunked');
   res.setHeader('X-Session-Id', sessionId);
 
-  const stream = await openai.chat.completions.create({
+  const stream = await getOpenAI().chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -371,7 +375,7 @@ export async function streamChatReply(sessionId: string, userMessage: string, re
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  const stream = await openai.chat.completions.create({
+  const stream = await getOpenAI().chat.completions.create({
     model: 'gpt-4o',
     messages,
     stream: true,
