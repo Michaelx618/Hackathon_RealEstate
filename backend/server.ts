@@ -7,6 +7,7 @@ import fs from 'fs';
 import { isGeminiConfigured } from './ai-client.js';
 import {
   createSession,
+  ensureAddressResearch,
   getSession,
   renderAdvisorPreview,
   streamFirstReply,
@@ -355,6 +356,33 @@ app.post('/api/advisor/chat', async (req: Request, res: Response) => {
     console.error('Advisor chat error:', err);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Failed to get reply' });
+    }
+  }
+});
+
+app.get('/api/advisor/research/:sessionId', async (req: Request, res: Response) => {
+  try {
+    if (!isGeminiConfigured()) {
+      res.status(503).json({ error: 'Advisor is not configured (missing GEMINI_API_KEY)' });
+      return;
+    }
+
+    const sessionId = optionalString(req.params.sessionId);
+    if (!sessionId) {
+      res.status(400).json({ error: 'Missing sessionId' });
+      return;
+    }
+    if (!getSession(sessionId)) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    const research = await ensureAddressResearch(sessionId);
+    res.json({ research });
+  } catch (err) {
+    console.error('Advisor address research error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to load address research' });
     }
   }
 });

@@ -15,6 +15,58 @@ type AdvisorRenderResult = {
   notes?: string[]
 }
 
+type AdvisorAddressResearch = {
+  query: string
+  normalizedAddress?: string
+  latitude?: number
+  longitude?: number
+  city?: string
+  provinceState?: string
+  postalCode?: string
+  countryCode?: string
+  amenitySummary?: {
+    schools: number
+    groceries: number
+    parks: number
+    transitStops: number
+    nearestTransitStopM?: number
+  }
+  rentSignals?: {
+    currency: string
+    condoSampleCount: number
+    houseSampleCount: number
+    condoMedianMonthly?: number
+    houseMedianMonthly?: number
+    blendedMonthlyLow?: number
+    blendedMonthlyHigh?: number
+    comparables: Array<{
+      title: string
+      url: string
+      snippet?: string
+      propertyType: 'condo' | 'house'
+      monthlyRent: number
+      currency: string
+    }>
+    notes: string[]
+  }
+  listingHits: Array<{
+    title: string
+    url: string
+    snippet?: string
+  }>
+  sources: Array<{
+    label: string
+    url: string
+    note?: string
+  }>
+  notes: string[]
+  updatedAt: string
+}
+
+type AdvisorResearchResponse = {
+  research?: AdvisorAddressResearch
+}
+
 function extractFirst(text: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern)
@@ -36,7 +88,20 @@ function extractPhases(text: string): { phase: number; label: string }[] {
     const num = Number(m[1])
     if (num >= 1 && num <= 10) phases.push({ phase: num, label: m[2].trim() })
   }
-  return phases.slice(0, 6)
+  const dashRe = /(?:^|\n)\s*(?:\*\*)?Phase\s*(\d+)\s*(?::|-|–|—)\s*([^\n]+)/gi
+  while ((m = dashRe.exec(text)) !== null) {
+    const num = Number(m[1])
+    if (num >= 1 && num <= 10) phases.push({ phase: num, label: m[2].trim() })
+  }
+  const deduped: { phase: number; label: string }[] = []
+  const seen = new Set<number>()
+  for (const phase of phases) {
+    if (seen.has(phase.phase)) continue
+    seen.add(phase.phase)
+    deduped.push(phase)
+  }
+  deduped.sort((a, b) => a.phase - b.phase)
+  return deduped.slice(0, 6)
 }
 
 function extractPotentialScore(text: string): number | null {
@@ -56,21 +121,198 @@ function extractPotentialScore(text: string): number | null {
 function extractTimeline(text: string): string | null {
   const m = text.match(/\*\*Estimated renovation timeline:\*\*\s*([^\n]+)/i)
   if (m?.[1]) return m[1].trim()
-  const alt = text.match(/Estimated renovation timeline[:\s]*([^\n]+)/i)
-  return alt?.[1]?.trim() ?? null
+  const alt = text.match(/Estimated renovation timeline[:\s-]*([^\n]+)/i)
+  if (alt?.[1]) return alt[1].trim()
+  const generic = text.match(/(?:timeline|duration)[:\s-]*([^\n]+)/i)
+  if (generic?.[1]) return generic[1].trim()
+  const months = text.match(/\b(\d+\s*(?:-|to|–|—)\s*\d+\s*(?:months?|mos?)|\d+\s*(?:months?|mos?))\b/i)
+  return months?.[1]?.trim() ?? null
 }
 
 function extractKeyFactors(text: string): string[] {
   const factors: string[] = []
   const keySection = text.match(/\*\*Key factors:\*\*\s*\n([\s\S]*?)(?=\n\s*\n|\*\*[A-Z]|$)/i)
-  if (!keySection?.[1]) return factors
-  const block = keySection[1]
-  const lines = block.split('\n').map((l) => l.trim()).filter(Boolean)
-  for (const line of lines) {
-    const cleaned = line.replace(/^[-*•]\s*/, '').trim()
-    if (cleaned.length > 2) factors.push(cleaned)
+  const altKeySection = text.match(/Key factors?:\s*\n([\s\S]*?)(?=\n\s*\n|\n\s*\d+\.\s|\n\s*\*\*[A-Z]|$)/i)
+  const block = keySection?.[1] || altKeySection?.[1]
+  if (block) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean)
+    for (const line of lines) {
+      const cleaned = line.replace(/^[-*•]\s*/, '').trim()
+      if (cleaned.length > 2) factors.push(cleaned)
+    }
   }
+  if (factors.length > 0) return factors.slice(0, 12)
+
+  const fallbackBullets = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^[-*•]\s+/.test(line))
+    .map((line) => line.replace(/^[-*•]\s+/, '').trim())
+    .filter((line) => line.length > 2)
+  if (fallbackBullets.length > 0) return fallbackBullets.slice(0, 12)
   return factors.slice(0, 12)
+}
+
+type AdvisorLinkRef = {
+  label: string
+  url: string
+}
+
+const DEFAULT_PRICING_REFERENCES: AdvisorLinkRef[] = [
+  { label: 'RenoMark - Find a Renovator', url: 'https://renomark.ca/find-a-renovator/' },
+  { label: 'Ontario Association of Architects Directory', url: 'https://oaa.on.ca/oaa-directory' },
+  { label: 'OAA Practice Register', url: 'https://secure.oaa.on.ca/practiceregister' },
+  { label: 'Route Homes Toronto Renovation Costs', url: 'https://routehomes.ca/average-home-renovation-costs-in-toronto/' },
+  { label: 'HomeStars Renovation Cost Guide', url: 'https://www.homestars.com/home-constructions-renovations/price-guides/cost-to-renovate-a-house' },
+  { label: 'Toronto Building Permit Fees', url: 'https://www.toronto.ca/services-payments/building-construction/apply-for-a-building-permit/building-permit-fees/' },
+  { label: 'Rentals.ca National Rent Report', url: 'https://rentals.ca/national-rent-report' },
+  { label: 'Urbanation Rental Survey', url: 'https://urbanation.ca/news/q2-2025-condominium-rental-market-survey' },
+]
+
+function sanitizeHeadingLine(line: string): string {
+  return line
+    .replace(/\*\*/g, '')
+    .replace(/^[\s\-*•]+/, '')
+    .trim()
+    .toLowerCase()
+}
+
+function extractInlineHeadingContent(line: string, headingStarts: string[]): string | null {
+  const normalizedLine = sanitizeHeadingLine(line)
+  for (const heading of headingStarts) {
+    const normalizedHeading = heading.trim().toLowerCase()
+    if (!normalizedLine.startsWith(normalizedHeading)) continue
+
+    const withoutBold = line.replace(/\*\*/g, '').trim()
+    const idx = withoutBold.toLowerCase().indexOf(normalizedHeading)
+    if (idx < 0) return null
+    const tail = withoutBold.slice(idx + normalizedHeading.length).replace(/^\s*[:\-–—]\s*/, '').trim()
+    if (!tail) return null
+    return tail
+  }
+  return null
+}
+
+function extractSectionLines(text: string, headingStarts: string[]): string[] {
+  const lines = text.split('\n')
+  const normalizedHeadings = headingStarts.map((h) => h.trim().toLowerCase())
+  let start = -1
+  const out: string[] = []
+  let blankRun = 0
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i] || ''
+    const normalized = sanitizeHeadingLine(raw)
+    if (normalizedHeadings.some((h) => normalized.startsWith(h))) {
+      start = i + 1
+      const inline = extractInlineHeadingContent(raw, headingStarts)
+      if (inline) out.push(inline)
+      break
+    }
+  }
+
+  if (start < 0) return []
+  for (let i = start; i < lines.length; i += 1) {
+    const raw = (lines[i] || '').trim()
+    const normalized = sanitizeHeadingLine(raw)
+
+    if (!raw) {
+      if (out.length > 0) {
+        blankRun += 1
+        if (blankRun >= 2) break
+      }
+      continue
+    }
+    blankRun = 0
+
+    const looksLikeNewSection = /^(\d+\.\s+[A-Za-z]|\*\*[A-Za-z][^*]{1,80}:\*\*|[A-Za-z][A-Za-z0-9 /+&()'"-]{2,90}:\s*)$/.test(raw)
+    if (out.length > 0 && looksLikeNewSection) break
+    if (
+      out.length > 0
+      && normalized.startsWith('phase ')
+      && !normalizedHeadings.some((h) => h.startsWith('phase'))
+    ) {
+      break
+    }
+
+    out.push(raw)
+  }
+
+  return out
+}
+
+function toBulletItems(lines: string[]): string[] {
+  const bullets: string[] = []
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    const bullet = line.match(/^[-*•]\s+(.+)$/)
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/)
+    const content = bullet?.[1] || numbered?.[1]
+    if (content) {
+      bullets.push(content.trim())
+      continue
+    }
+    if (bullets.length > 0) {
+      bullets[bullets.length - 1] = `${bullets[bullets.length - 1]} ${line}`.trim()
+    } else {
+      bullets.push(line)
+    }
+  }
+  return bullets.slice(0, 20)
+}
+
+function extractSectionBulletItems(text: string, headings: string[]): string[] {
+  return toBulletItems(extractSectionLines(text, headings))
+}
+
+function normalizeChatMessage(content: string): string {
+  return content
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+}
+
+function extractReferenceLinks(text: string): AdvisorLinkRef[] {
+  const sectionLines = extractSectionLines(text, [
+    'pricing references',
+    'references',
+    'source links',
+    'sources used',
+  ])
+  const candidateLines = sectionLines.length > 0 ? sectionLines : text.split('\n')
+  const items: AdvisorLinkRef[] = []
+  const seen = new Set<string>()
+
+  const push = (urlRaw: string, labelRaw?: string) => {
+    const url = urlRaw.replace(/[),.;]+$/g, '').trim()
+    if (!url) return
+    if (seen.has(url)) return
+    seen.add(url)
+    const label = (labelRaw || '').replace(/^[-*•\d.)\s]+/, '').trim() || url
+    items.push({ label, url })
+  }
+
+  const markdownRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g
+  const bareUrlRe = /(https?:\/\/[^\s)>\]]+)/g
+
+  for (const line of candidateLines) {
+    let foundMarkdown = false
+    for (const match of line.matchAll(markdownRe)) {
+      if (!match[1] || !match[2]) continue
+      foundMarkdown = true
+      push(match[2], match[1])
+    }
+    if (foundMarkdown) continue
+
+    const bare = line.match(bareUrlRe)
+    if (bare && bare[0]) {
+      const label = line.replace(bare[0], '').replace(/\s*[-–—:]\s*$/, '').trim()
+      push(bare[0], label || bare[0])
+    }
+  }
+
+  if (items.length > 0) return items.slice(0, 12)
+  return DEFAULT_PRICING_REFERENCES
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -92,6 +334,32 @@ function parsePositiveNumber(value: string): number | undefined {
   const normalized = Number(value.replace(/,/g, '').trim())
   if (!Number.isFinite(normalized) || normalized <= 0) return undefined
   return normalized
+}
+
+function formatCurrency(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('en-CA', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount)
+  } catch {
+    return `${currency} ${Math.round(amount).toLocaleString()}`
+  }
+}
+
+function formatMonthlyRange(low?: number, high?: number, currency = 'CAD'): string | null {
+  if (typeof low !== 'number' || typeof high !== 'number') return null
+  const safeLow = Math.round(low)
+  const safeHigh = Math.round(high)
+  return `${formatCurrency(safeLow, currency)} - ${formatCurrency(safeHigh, currency)} / month`
+}
+
+function formatAnnualFromMonthlyRange(low?: number, high?: number, currency = 'CAD'): string | null {
+  if (typeof low !== 'number' || typeof high !== 'number') return null
+  const annualLow = Math.round(low * 12)
+  const annualHigh = Math.round(high * 12)
+  return `${formatCurrency(annualLow, currency)} - ${formatCurrency(annualHigh, currency)} / year`
 }
 
 function processImage(file: File): Promise<string> {
@@ -167,6 +435,8 @@ export default function Advisor() {
   const [streamingContent, setStreamingContent] = useState('')
   const [previewImageDataUrl, setPreviewImageDataUrl] = useState<string | null>(null)
   const [previewNotes, setPreviewNotes] = useState<string[]>([])
+  const [addressResearch, setAddressResearch] = useState<AdvisorAddressResearch | null>(null)
+  const [addressResearchLoading, setAddressResearchLoading] = useState(false)
   const [pendingReferencePreviews, setPendingReferencePreviews] = useState<string[]>([])
   const [pendingReferenceImages, setPendingReferenceImages] = useState<string[]>([])
 
@@ -197,37 +467,96 @@ export default function Advisor() {
   const matchedSize = extractFirst(allAssistantText, [
     /\*\*Matched size used for estimate:\*\*\s*([^\n]+)/i,
     /Matched size used for estimate:\s*([^\n]+)/i,
+    /Matched size[:\s-]*([^\n]+)/i,
+  ])
+  const estimatedCurrentSize = extractFirst(allAssistantText, [
+    /\*\*Estimated current size from image:\*\*\s*([^\n]+)/i,
+    /Estimated current size from image:\s*([^\n]+)/i,
+    /Current size from image[:\s-]*([^\n]+)/i,
+  ])
+  const documentedSize = extractFirst(allAssistantText, [
+    /\*\*Documented size:\*\*\s*([^\n]+)/i,
+    /Documented size:\s*([^\n]+)/i,
+    /Documented floor area[:\s-]*([^\n]+)/i,
   ])
   const constructionCost = extractFirst(allAssistantText, [
     /\*\*Construction cost:\*\*\s*([^\n]+)/i,
     /\*\*Estimated cost:\*\*\s*([^\n*]+)/i,
     /Construction cost:\s*([^\n]+)/i,
+    /Renovation cost[:\s-]*([^\n]+)/i,
+    /Total construction cost[:\s-]*([^\n]+)/i,
+  ])
+  const permitSoftCosts = extractFirst(allAssistantText, [
+    /\*\*Permit\s*&\s*soft costs:\*\*\s*([^\n]+)/i,
+    /Permit\s*&\s*soft costs:\s*([^\n]+)/i,
+    /Permit and soft costs[:\s-]*([^\n]+)/i,
+    /Permit costs[:\s-]*([^\n]+)/i,
   ])
   const outOfPocket = extractFirst(allAssistantText, [
     /\*\*Total out-of-pocket:\*\*\s*([^\n]+)/i,
     /Total out-of-pocket:\s*([^\n]+)/i,
+    /Total cost[:\s-]*([^\n]+)/i,
+    /Out[- ]of[- ]pocket[:\s-]*([^\n]+)/i,
   ])
   const monthlyRent = extractFirst(allAssistantText, [
     /\*\*Estimated monthly rent:\*\*\s*([^\n]+)/i,
     /Estimated monthly rent:\s*([^\n]+)/i,
+    /Monthly rent[:\s-]*([^\n]+)/i,
+    /Monthly rental(?: income)?[:\s-]*([^\n]+)/i,
   ])
   const annualGross = extractFirst(allAssistantText, [
     /\*\*Estimated annual gross rent:\*\*\s*([^\n]+)/i,
     /Estimated annual gross rent:\s*([^\n]+)/i,
+    /Annual gross rent[:\s-]*([^\n]+)/i,
+    /Annual rent[:\s-]*([^\n]+)/i,
   ])
   const payback = extractFirst(allAssistantText, [
     /\*\*Simple payback:\*\*\s*([^\n]+)/i,
     /Simple payback:\s*([^\n]+)/i,
+    /Gross simple payback[^:\n]*[:\s-]*([^\n]+)/i,
+    /Payback[^:\n]*[:\s-]*([^\n]+)/i,
   ])
 
+  const rentSignals = addressResearch?.rentSignals
+  const monthlyRentFallback = formatMonthlyRange(
+    rentSignals?.blendedMonthlyLow,
+    rentSignals?.blendedMonthlyHigh,
+    rentSignals?.currency || 'CAD',
+  )
+  const annualGrossFallback = formatAnnualFromMonthlyRange(
+    rentSignals?.blendedMonthlyLow,
+    rentSignals?.blendedMonthlyHigh,
+    rentSignals?.currency || 'CAD',
+  )
+
   const metricCards = [
-    { label: 'Matched Size', value: matchedSize },
-    { label: 'Construction Cost', value: constructionCost },
-    { label: 'Total Out-of-Pocket', value: outOfPocket },
-    { label: 'Monthly Rent', value: monthlyRent },
-    { label: 'Annual Gross Rent', value: annualGross },
-    { label: 'Simple Payback', value: payback },
-  ].filter((item) => Boolean(item.value))
+    { label: 'Image Size Estimate', value: estimatedCurrentSize || 'Not detected yet' },
+    { label: 'Documented Size', value: documentedSize || 'Not detected yet' },
+    { label: 'Matched Size', value: matchedSize || 'Not detected yet' },
+    { label: 'Construction Cost', value: constructionCost || 'Not detected yet' },
+    { label: 'Permit & Soft Costs', value: permitSoftCosts || 'Not detected yet' },
+    { label: 'Total Out-of-Pocket', value: outOfPocket || 'Not detected yet' },
+    { label: 'Monthly Rent', value: monthlyRent || monthlyRentFallback || 'Not detected yet' },
+    { label: 'Annual Gross Rent', value: annualGross || annualGrossFallback || 'Not detected yet' },
+    { label: 'Simple Payback', value: payback || 'Not detected yet' },
+  ]
+
+  const detailedPricing = extractSectionBulletItems(allAssistantText, [
+    'detailed pricing breakdown',
+    'detailed cost breakdown',
+    'cost breakdown',
+  ])
+  const outOfPocketDetails = extractSectionBulletItems(allAssistantText, [
+    'out-of-pocket breakdown',
+    'out of pocket breakdown',
+    'total out-of-pocket breakdown',
+  ])
+  const returnDetails = extractSectionBulletItems(allAssistantText, [
+    'return breakdown',
+    'rental return breakdown',
+    'roi breakdown',
+  ])
+  const pricingReferences = extractReferenceLinks(allAssistantText)
 
   const addCurrentImages = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return
@@ -326,6 +655,25 @@ export default function Advisor() {
     }
   }
 
+  const loadAddressResearch = async (sid: string) => {
+    setAddressResearchLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/api/advisor/research/${encodeURIComponent(sid)}`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        const msg = data?.error as string | undefined
+        throw new Error(msg || `Address research request failed: ${res.status}`)
+      }
+      const data = await res.json() as AdvisorResearchResponse
+      setAddressResearch(data.research || null)
+    } catch (err) {
+      console.error('Failed to load address intelligence:', err)
+      setAddressResearch(null)
+    } finally {
+      setAddressResearchLoading(false)
+    }
+  }
+
   const startSession = async () => {
     if (currentImagesBase64.length === 0) {
       setError('Please upload at least one current house photo first.')
@@ -340,14 +688,13 @@ export default function Advisor() {
     const notes = currentHouseStatus.trim() ? ` Additional notes: ${currentHouseStatus.trim()}.` : ''
     const fullMessage = firstMessage + notes
 
+    setAddressResearch(null)
+    setAddressResearchLoading(false)
     setLoading(true)
     setError(null)
     setStreamingContent('')
 
     try {
-      const interiorArea = parsePositiveNumber(interiorAreaSqft)
-      const landArea = parsePositiveNumber(landAreaSqft)
-
       const res = await fetch(`${apiBase}/api/advisor/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -378,6 +725,7 @@ export default function Advisor() {
         throw new Error('Session ID missing from advisor response.')
       }
       setSessionId(sid)
+      void loadAddressResearch(sid)
 
       const header = `[${answers.propertyType || 'House'} | Current images: ${currentImagesBase64.length} | Target images: ${targetImagesBase64.length}]`
       const userText = `Goal (from questionnaire): ${fullMessage}`
@@ -476,6 +824,8 @@ export default function Advisor() {
     setRendering(false)
     setPreviewImageDataUrl(null)
     setPreviewNotes([])
+    setAddressResearch(null)
+    setAddressResearchLoading(false)
     setPendingReferencePreviews([])
     setPendingReferenceImages([])
     setError(null)
@@ -710,53 +1060,233 @@ export default function Advisor() {
                 )}
               </div>
 
-              {(potentialScore !== null || timeline || keyFactors.length > 0) && (
-                <div className="advisor-summary">
-                  {potentialScore !== null && (
-                    <div className="advisor-score-card" role="status" aria-label={`Potential score ${potentialScore} out of 100`}>
-                      <span className="advisor-score-card__label">Potential</span>
-                      <span className="advisor-score-card__value">
-                        <span className="advisor-score-card__number">{potentialScore}</span>
-                        <span className="advisor-score-card__max">/100</span>
-                      </span>
-                    </div>
-                  )}
-                  {timeline && (
-                    <div className="advisor-timeline-badge" role="status">
-                      <span className="advisor-timeline-badge__label">Timeline</span>
-                      <span className="advisor-timeline-badge__value">{timeline}</span>
-                    </div>
-                  )}
-                  {keyFactors.length > 0 && (
-                    <div className="advisor-key-factors" role="region" aria-label="Key factors">
-                      <h3 className="advisor-key-factors__title">Key factors</h3>
-                      <ul className="advisor-key-factors__list">
-                        {keyFactors.map((factor, i) => (
-                          <li key={i} className="advisor-key-factors__item">{factor}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+              <div className="advisor-summary">
+                <div className="advisor-score-card" role="status" aria-label={potentialScore !== null ? `Potential score ${potentialScore} out of 100` : 'Potential score pending'}>
+                  <span className="advisor-score-card__label">Potential</span>
+                  <span className="advisor-score-card__value">
+                    <span className="advisor-score-card__number">{potentialScore !== null ? potentialScore : '—'}</span>
+                    <span className="advisor-score-card__max">/100</span>
+                  </span>
                 </div>
-              )}
+                <div className="advisor-timeline-badge" role="status">
+                  <span className="advisor-timeline-badge__label">Timeline</span>
+                  <span className="advisor-timeline-badge__value">{timeline || 'Not detected yet'}</span>
+                </div>
+                <div className="advisor-key-factors" role="region" aria-label="Key factors">
+                  <h3 className="advisor-key-factors__title">Key factors</h3>
+                  <ul className="advisor-key-factors__list">
+                    {keyFactors.length > 0 ? keyFactors.map((factor, i) => (
+                      <li key={i} className="advisor-key-factors__item">{factor}</li>
+                    )) : (
+                      <li className="advisor-key-factors__item advisor-key-factors__item--placeholder">
+                        No key factors detected yet. Ask: "Summarize key factors in bullet points."
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              </div>
 
-              {metricCards.length > 0 && (
-                <div className="advisor-metrics-wrap">
-                  <h3 className="advisor-metrics__title">Cost and return snapshot</h3>
-                  <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
-                    {metricCards.map((metric) => (
-                      <div className="advisor-metric-card" key={metric.label}>
-                        <span className="advisor-metric-card__label">{metric.label}</span>
-                        <span className="advisor-metric-card__value">{metric.value}</span>
+              <div className="advisor-metrics-wrap">
+                <h3 className="advisor-metrics__title">Cost and return snapshot</h3>
+                <div className="advisor-metrics" role="status" aria-label="Financial summary cards">
+                  {metricCards.map((metric) => (
+                    <div className="advisor-metric-card" key={metric.label}>
+                      <span className="advisor-metric-card__label">{metric.label}</span>
+                      <span className={`advisor-metric-card__value${metric.value === 'Not detected yet' ? ' advisor-metric-card__value--placeholder' : ''}`}>{metric.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="advisor-detail-card advisor-address-card" role="region" aria-label="Address intelligence and local market context">
+                <h3 className="advisor-detail-card__title">Address Intelligence</h3>
+                {addressResearchLoading ? (
+                  <p className="advisor-detail-card__empty">Researching property context from public sources…</p>
+                ) : addressResearch ? (
+                  <>
+                    <div className="advisor-address-card__meta">
+                      <div className="advisor-address-card__meta-item">
+                        <span className="advisor-address-card__meta-label">Matched Address</span>
+                        <span className="advisor-address-card__meta-value">{addressResearch.normalizedAddress || addressResearch.query}</span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                      {(typeof addressResearch.latitude === 'number' && typeof addressResearch.longitude === 'number') && (
+                        <div className="advisor-address-card__meta-item">
+                          <span className="advisor-address-card__meta-label">Coordinates</span>
+                          <span className="advisor-address-card__meta-value">
+                            {addressResearch.latitude.toFixed(5)}, {addressResearch.longitude.toFixed(5)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
 
-              {phases.length > 0 && (
-                <div className="advisor-timeline" role="region" aria-label="Renovation plan phases">
-                  <h3 className="advisor-timeline__title">Execution phases</h3>
+                    {addressResearch.amenitySummary && (
+                      <div className="advisor-address-card__amenities">
+                        <span className="advisor-address-card__pill">Schools: {addressResearch.amenitySummary.schools}</span>
+                        <span className="advisor-address-card__pill">Groceries: {addressResearch.amenitySummary.groceries}</span>
+                        <span className="advisor-address-card__pill">Parks: {addressResearch.amenitySummary.parks}</span>
+                        <span className="advisor-address-card__pill">Transit stops: {addressResearch.amenitySummary.transitStops}</span>
+                        {typeof addressResearch.amenitySummary.nearestTransitStopM === 'number' && (
+                          <span className="advisor-address-card__pill">Nearest transit: ~{addressResearch.amenitySummary.nearestTransitStopM}m</span>
+                        )}
+                      </div>
+                    )}
+
+                    {addressResearch.rentSignals && (
+                      <div className="advisor-address-card__group advisor-address-card__group--rent">
+                        <h4>Nearby rent comparables (condo + house)</h4>
+                        <div className="advisor-address-card__rent-grid">
+                          <div className="advisor-address-card__rent-cell">
+                            <span className="advisor-address-card__meta-label">Condo median</span>
+                            <span className="advisor-address-card__meta-value">
+                              {typeof addressResearch.rentSignals.condoMedianMonthly === 'number'
+                                ? `${formatCurrency(addressResearch.rentSignals.condoMedianMonthly, addressResearch.rentSignals.currency)} / month`
+                                : 'Not enough data'}
+                            </span>
+                            <span className="advisor-address-card__snippet">
+                              Samples: {addressResearch.rentSignals.condoSampleCount}
+                            </span>
+                          </div>
+                          <div className="advisor-address-card__rent-cell">
+                            <span className="advisor-address-card__meta-label">House median</span>
+                            <span className="advisor-address-card__meta-value">
+                              {typeof addressResearch.rentSignals.houseMedianMonthly === 'number'
+                                ? `${formatCurrency(addressResearch.rentSignals.houseMedianMonthly, addressResearch.rentSignals.currency)} / month`
+                                : 'Not enough data'}
+                            </span>
+                            <span className="advisor-address-card__snippet">
+                              Samples: {addressResearch.rentSignals.houseSampleCount}
+                            </span>
+                          </div>
+                          <div className="advisor-address-card__rent-cell advisor-address-card__rent-cell--wide">
+                            <span className="advisor-address-card__meta-label">Predicted rent range</span>
+                            <span className="advisor-address-card__meta-value">
+                              {formatMonthlyRange(
+                                addressResearch.rentSignals.blendedMonthlyLow,
+                                addressResearch.rentSignals.blendedMonthlyHigh,
+                                addressResearch.rentSignals.currency,
+                              ) || 'Not enough data'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {addressResearch.rentSignals.comparables.length > 0 && (
+                          <ul className="advisor-detail-card__links">
+                            {addressResearch.rentSignals.comparables.slice(0, 6).map((comp) => (
+                              <li key={`${comp.propertyType}-${comp.url}`}>
+                                <a href={comp.url} target="_blank" rel="noreferrer">
+                                  [{comp.propertyType}] {formatCurrency(comp.monthlyRent, comp.currency)} / month - {comp.title}
+                                </a>
+                                {comp.snippet && <span className="advisor-address-card__snippet">{comp.snippet}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+
+                    {addressResearch.listingHits.length > 0 && (
+                      <div className="advisor-address-card__group">
+                        <h4>Potential listing/market matches</h4>
+                        <ul className="advisor-detail-card__links">
+                          {addressResearch.listingHits.slice(0, 6).map((hit) => (
+                            <li key={hit.url}>
+                              <a href={hit.url} target="_blank" rel="noreferrer">{hit.title}</a>
+                              {hit.snippet && <span className="advisor-address-card__snippet">{hit.snippet}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {addressResearch.sources.length > 0 && (
+                      <div className="advisor-address-card__group">
+                        <h4>Data sources used</h4>
+                        <ul className="advisor-detail-card__links">
+                          {addressResearch.sources.map((source) => (
+                            <li key={source.url}>
+                              <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
+                              {source.note && <span className="advisor-address-card__snippet">{source.note}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {addressResearch.notes.length > 0 && (
+                      <div className="advisor-address-card__group">
+                        <h4>Research notes</h4>
+                        <ul className="advisor-detail-card__list">
+                          {addressResearch.notes.slice(0, 8).map((note, idx) => (
+                            <li key={`${note}-${idx}`}>{note}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <p className="advisor-address-card__updated">
+                      Updated: {new Date(addressResearch.updatedAt).toLocaleString()}
+                    </p>
+                  </>
+                ) : (
+                  <p className="advisor-detail-card__empty">
+                    Address intelligence not loaded yet.
+                  </p>
+                )}
+              </div>
+
+              <div className="advisor-detail-card" role="region" aria-label="Detailed pricing breakdown">
+                <h3 className="advisor-detail-card__title">Detailed Pricing Breakdown</h3>
+                {detailedPricing.length > 0 ? (
+                  <ul className="advisor-detail-card__list">
+                    {detailedPricing.map((line, idx) => (
+                      <li key={`pricing-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="advisor-detail-card__empty">Not detected yet. Ask: "Provide detailed pricing breakdown with line items."</p>
+                )}
+              </div>
+
+              <div className="advisor-detail-card" role="region" aria-label="Out-of-pocket breakdown">
+                <h3 className="advisor-detail-card__title">Total Out-of-Pocket Breakdown</h3>
+                {outOfPocketDetails.length > 0 ? (
+                  <ul className="advisor-detail-card__list">
+                    {outOfPocketDetails.map((line, idx) => (
+                      <li key={`oop-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="advisor-detail-card__empty">Not detected yet. Ask: "Show full out-of-pocket math breakdown."</p>
+                )}
+              </div>
+
+              <div className="advisor-detail-card" role="region" aria-label="Return breakdown">
+                <h3 className="advisor-detail-card__title">Owner Return Breakdown</h3>
+                {returnDetails.length > 0 ? (
+                  <ul className="advisor-detail-card__list">
+                    {returnDetails.map((line, idx) => (
+                      <li key={`return-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="advisor-detail-card__empty">Not detected yet. Ask: "Show monthly/annual return breakdown and ROI."</p>
+                )}
+              </div>
+
+              <div className="advisor-detail-card" role="region" aria-label="Pricing references and quote links">
+                <h3 className="advisor-detail-card__title">Pricing References and Quote Links</h3>
+                <ul className="advisor-detail-card__links">
+                  {pricingReferences.map((ref) => (
+                    <li key={ref.url}>
+                      <a href={ref.url} target="_blank" rel="noreferrer">{ref.label}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="advisor-timeline" role="region" aria-label="Renovation plan phases">
+                <h3 className="advisor-timeline__title">Execution phases</h3>
+                {phases.length > 0 ? (
                   <div className="advisor-timeline__graph">
                     {phases.map((p, i) => (
                       <div key={p.phase} className="advisor-timeline__phase">
@@ -766,8 +1296,10 @@ export default function Advisor() {
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
+                ) : (
+                  <p className="advisor-timeline__empty">No phase breakdown detected yet. Ask: "Give Phase 1, Phase 2, and Phase 3."</p>
+                )}
+              </div>
             </aside>
 
             <div className="advisor-report__chat">
@@ -781,13 +1313,13 @@ export default function Advisor() {
                   {messages.map((m, i) => (
                     <div key={i} className={`advisor-chat__msg advisor-chat__msg--${m.role}`}>
                       <span className="advisor-chat__role">{m.role === 'user' ? 'You' : 'Advisor'}</span>
-                      <div className="advisor-chat__content">{m.content}</div>
+                      <div className="advisor-chat__content">{normalizeChatMessage(m.content)}</div>
                     </div>
                   ))}
                   {streamingContent && (
                     <div className="advisor-chat__msg advisor-chat__msg--assistant">
                       <span className="advisor-chat__role">Advisor</span>
-                      <div className="advisor-chat__content">{streamingContent}</div>
+                      <div className="advisor-chat__content">{normalizeChatMessage(streamingContent)}</div>
                     </div>
                   )}
                   <div ref={chatEndRef} />
