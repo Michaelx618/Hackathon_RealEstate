@@ -1,4 +1,4 @@
-import './load-env';
+import './load-env.js';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
