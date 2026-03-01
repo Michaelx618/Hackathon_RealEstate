@@ -6,8 +6,7 @@
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "dev:backend": "npm run dev --prefix backend",
     "dev:frontend": "npm run dev --prefix frontend",
-    "build": "npm run build --prefix frontend && npm run build --prefix backend",
-    "build": "npm run build --prefix frontend && npm run build --prefix backend",
+    "build": "cd frontend && npm install && npm run build && cd ../backend && npm install && npm run build",
     "start": "node backend/dist/server.js"
   },
   "devDependencies": {
