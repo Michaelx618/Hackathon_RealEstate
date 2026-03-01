@@ -102,13 +102,70 @@ function sanitizeUrlArray(value: unknown, max = 8): string[] {
   return urls.slice(0, max);
 }
 
-function sanitizeFurnishingAction(value: unknown):
+type FurnishingLayoutPlacementInput = {
+  slotId: string;
+  optionId: string;
+  x: number;
+  y: number;
+  scale: number;
+};
+
+type FurnishingActionInput =
   | { type: 'select_option'; slotId: string; optionId: string }
   | { type: 'clear_slot'; slotId: string }
+  | { type: 'update_layout'; placements: FurnishingLayoutPlacementInput[] };
+
+function parseFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/,/g, '').trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function sanitizeLayoutPlacements(value: unknown, max = 16): FurnishingLayoutPlacementInput[] {
+  if (!Array.isArray(value)) return [];
+  const placements: FurnishingLayoutPlacementInput[] = [];
+  for (const raw of value.slice(0, max)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const obj = raw as Record<string, unknown>;
+    const slotId = optionalString(obj.slotId);
+    const optionId = optionalString(obj.optionId);
+    const x = parseFiniteNumber(obj.x);
+    const y = parseFiniteNumber(obj.y);
+    if (!slotId || !optionId || typeof x !== 'number' || typeof y !== 'number') continue;
+
+    const scaleRaw = parseFiniteNumber(obj.scale);
+    placements.push({
+      slotId,
+      optionId,
+      x: Number(clamp(x, 0, 1).toFixed(4)),
+      y: Number(clamp(y, 0, 1).toFixed(4)),
+      scale: Number(clamp(scaleRaw ?? 1, 0.4, 1.8).toFixed(3)),
+    });
+  }
+  return placements;
+}
+
+function sanitizeFurnishingAction(value: unknown):
+  | FurnishingActionInput
   | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const action = value as Record<string, unknown>;
   const type = optionalString(action.type);
+  if (!type) return undefined;
+
+  if (type === 'update_layout') {
+    const placements = sanitizeLayoutPlacements(action.placements);
+    if (placements.length === 0) return undefined;
+    return { type: 'update_layout', placements };
+  }
+
   const slotId = optionalString(action.slotId);
   if (!slotId) return undefined;
 
