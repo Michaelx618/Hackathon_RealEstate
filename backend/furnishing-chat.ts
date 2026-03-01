@@ -1246,11 +1246,20 @@ function buildLayoutInstructionLines(layoutPlan, selectedItems) {
     }
     return lines;
 }
-async function generatePreviewImage(session, selectedItems, spacing) {
+async function generatePreviewImage(session, selectedItems, spacing, mode = 'standard') {
     const notes = [];
     if (selectedItems.length === 0) {
         notes.push('No selected items yet, preview not rendered.');
         return { notes };
+    }
+    const isLayoutUpdateMode = mode === 'layout_update';
+    const hasPriorPreview = typeof session.previewImageDataUrl === 'string' && session.previewImageDataUrl.length > 0;
+    const usePriorPreviewAsBase = isLayoutUpdateMode && hasPriorPreview;
+    const baseImageDataUrl = usePriorPreviewAsBase
+        ? session.previewImageDataUrl
+        : session.context.roomImage;
+    if (isLayoutUpdateMode && !hasPriorPreview) {
+        notes.push('Layout update fallback: no prior staged preview found, so original room image was used as base.');
     }
     session.layoutPlan = alignLayoutWithSelection(session.layoutPlan, selectedItems);
     const layoutInstructions = buildLayoutInstructionLines(session.layoutPlan, selectedItems);
@@ -1261,31 +1270,54 @@ async function generatePreviewImage(session, selectedItems, spacing) {
                 : 'size not available');
         return `${index + 1}. ${item.name} (qty ${item.quantity}, size ${size})`;
     }).join('\n');
-    const promptParts = [
-        'STRICT EDIT-ONLY RULES (must follow):',
-        [
-            '- Keep camera angle, lens/FOV, perspective, framing, horizon, crop, and orientation EXACTLY the same as the original photo.',
-            '- Do not rotate, mirror, reframe, zoom, or change viewpoint.',
-            '- Do not alter room architecture or fixed elements (walls, ceiling, floor, windows, doors, built-in cabinets, appliances, outlets, trim, exterior view).',
-            '- Keep global lighting/exposure/white balance/shadows consistent with source image; no whole-image restyling.',
-            '- Only add/replace movable furniture and decor from the selected item list.',
-            '- If an item cannot fit, skip that item instead of changing camera angle or room structure.',
-        ].join('\n'),
-        'Furnish the room with the selected real products below, keeping realistic scale and non-overlapping layout.',
-        selectedList,
-        `Spacing target: fit status ${spacing.fitStatus}. Keep at least ~80-90 cm circulation where feasible.`,
-        'If everything cannot fit, prioritize main seating/bed/storage items first while keeping a believable design.',
+    const strictBaseRules = [
+        '- Keep camera angle, lens/FOV, perspective, framing, horizon, crop, and orientation EXACTLY the same as the original photo.',
+        '- Do not rotate, mirror, reframe, zoom, or change viewpoint.',
+        '- Do not alter room architecture or fixed elements (walls, ceiling, floor, windows, doors, built-in cabinets, appliances, outlets, trim, exterior view).',
+        '- Keep global lighting/exposure/white balance/shadows consistent with source image; no whole-image restyling.',
     ];
+    const promptParts = isLayoutUpdateMode
+        ? [
+            'STRICT MOVE-ONLY RULES (must follow):',
+            [
+                ...strictBaseRules,
+                '- Base image is already furnished. Keep the same staged furniture objects/materials/colors and object identities.',
+                '- Move/reposition existing furniture only according to anchors. Do NOT replace with different products or styles.',
+                '- Do not add extra furniture and do not remove existing staged furniture unless explicitly requested.',
+            ].join('\n'),
+            'Locked furniture set for this move-only update:',
+            selectedList,
+            `Spacing target: fit status ${spacing.fitStatus}. Keep at least ~80-90 cm circulation where feasible.`,
+        ]
+        : [
+            'STRICT EDIT-ONLY RULES (must follow):',
+            [
+                ...strictBaseRules,
+                '- Only add/replace movable furniture and decor from the selected item list.',
+                '- If an item cannot fit, skip that item instead of changing camera angle or room structure.',
+            ].join('\n'),
+            'Furnish the room with the selected real products below, keeping realistic scale and non-overlapping layout.',
+            selectedList,
+            `Spacing target: fit status ${spacing.fitStatus}. Keep at least ~80-90 cm circulation where feasible.`,
+            'If everything cannot fit, prioritize main seating/bed/storage items first while keeping a believable design.',
+        ];
     if (layoutInstructions.length > 0) {
         promptParts.push('User-adjusted placement anchors (from drag editor). Follow these anchors closely while keeping realistic fit and no overlap:');
         promptParts.push(layoutInstructions.join('\n'));
     }
     const prompt = promptParts.join('\n\n');
+    const referenceImageDataUrls = [];
+    if (usePriorPreviewAsBase) {
+        referenceImageDataUrls.push(session.context.roomImage);
+    }
+    if (session.context.floorPlanImage) {
+        referenceImageDataUrls.push(session.context.floorPlanImage);
+    }
     try {
         const previewImageDataUrl = await generateGeminiEditedImage({
             prompt,
-            baseImageDataUrl: session.context.roomImage,
-            referenceImageDataUrls: session.context.floorPlanImage ? [session.context.floorPlanImage] : [],
+            baseImageDataUrl,
+            referenceImageDataUrls,
         });
         return { previewImageDataUrl, notes };
     }
@@ -1452,7 +1484,10 @@ export async function runFurnishingTurn(sessionId, input) {
     session.layoutPlan = alignLayoutWithSelection(session.layoutPlan, selectedItems);
     const totals = computeTotals(selectedItems, session.context.market.currency);
     const spacing = analyzeSpacing(roomProfile, selectedItems);
-    const render = await generatePreviewImage(session, selectedItems, spacing);
+    const renderMode = action?.type === 'update_layout' && !message
+        ? 'layout_update'
+        : 'standard';
+    const render = await generatePreviewImage(session, selectedItems, spacing, renderMode);
     if (render.previewImageDataUrl) {
         session.previewImageDataUrl = render.previewImageDataUrl;
     }
