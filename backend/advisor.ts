@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto';
 import OpenAI from 'openai';
 import type { Response as ExpressResponse } from 'express';
-import pdfParse from 'pdf-parse';
 import {
   generateGeminiEditedImage,
   getGeminiChatModel,
@@ -605,6 +604,7 @@ async function prepareSupportingDocuments(docs: AdvisorDocumentInput[] | undefin
         continue;
       }
       try {
+        const { default: pdfParse } = await import('pdf-parse');
         const parsed = await pdfParse(decoded.buffer);
         const pdfText = parsed.text?.trim();
         if (pdfText) {
