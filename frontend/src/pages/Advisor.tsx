@@ -368,7 +368,9 @@ type MoneyRange = {
 }
 
 function parseMoneyToken(raw: string): number | null {
-  const cleaned = raw.trim().replace(/,/g, '')
+  // Repair malformed thousand groups like "800,00" -> "800,000" before numeric parsing.
+  const repaired = raw.trim().replace(/(\d{1,3}),(\d{1,2})(?!\d)/g, (_all, lead: string, group: string) => `${lead},${group.padEnd(3, '0')}`)
+  const cleaned = repaired.replace(/,/g, '')
   const suffix = cleaned.slice(-1).toLowerCase()
   const numericPart = suffix === 'k' || suffix === 'm' ? cleaned.slice(0, -1) : cleaned
   const parsed = Number(numericPart)
@@ -380,7 +382,7 @@ function parseMoneyToken(raw: string): number | null {
 
 function parseMoneyRange(raw: string | null | undefined): MoneyRange | null {
   if (!raw) return null
-  const matches = [...raw.matchAll(/(?:C\$|CAD\s*\$?|US\$\s*|USD\s*\$?|\$)\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.\d+)?[kKmM]?)/g)]
+  const matches = [...raw.matchAll(/(?:C\$|CAD\s*\$?|US\$\s*|USD\s*\$?|\$)\s*([0-9][0-9,]*(?:\.\d+)?[kKmM]?)/g)]
   const values = matches
     .map((m) => m[1] || '')
     .map((value) => parseMoneyToken(value))
@@ -390,6 +392,48 @@ function parseMoneyRange(raw: string | null | undefined): MoneyRange | null {
   if (values.length === 0) return null
   if (values.length === 1) return { low: values[0], high: values[0] }
   return { low: Math.min(values[0], values[1]), high: Math.max(values[0], values[1]) }
+}
+
+function detectCurrencyCode(raw: string | null | undefined, fallback = 'CAD'): string {
+  if (!raw) return fallback
+  const text = raw.toUpperCase()
+  if (text.includes('USD') || text.includes('US$')) return 'USD'
+  if (text.includes('CAD') || text.includes('C$')) return 'CAD'
+  return fallback
+}
+
+function formatMoneyRange(range: MoneyRange, currency = 'CAD', suffix = ''): string {
+  const low = Math.round(range.low)
+  const high = Math.round(range.high)
+  if (low === high) return `${formatCurrency(low, currency)}${suffix}`
+  return `${formatCurrency(low, currency)} - ${formatCurrency(high, currency)}${suffix}`
+}
+
+function parseSqftRange(raw: string | null | undefined): MoneyRange | null {
+  if (!raw) return null
+  const normalized = raw.replace(/sq\.?\s*ft/gi, 'sq ft').replace(/sf\b/gi, 'sq ft')
+  const rangeMatch = normalized.match(/([0-9][0-9,]*(?:\.\d+)?)\s*(?:-|to|–|—)\s*([0-9][0-9,]*(?:\.\d+)?)\s*sq\s*ft/i)
+  if (rangeMatch?.[1] && rangeMatch?.[2]) {
+    const low = parsePositiveNumber(rangeMatch[1])
+    const high = parsePositiveNumber(rangeMatch[2])
+    if (typeof low === 'number' && typeof high === 'number') {
+      return { low: Math.min(low, high), high: Math.max(low, high) }
+    }
+  }
+
+  const singleMatch = normalized.match(/([0-9][0-9,]*(?:\.\d+)?)\s*sq\s*ft/i)
+  if (singleMatch?.[1]) {
+    const sqft = parsePositiveNumber(singleMatch[1])
+    if (typeof sqft === 'number') return { low: sqft, high: sqft }
+  }
+
+  return null
+}
+
+function parsePerSqftCostRange(raw: string | null | undefined): MoneyRange | null {
+  if (!raw) return null
+  if (!/(?:\/\s*sq\.?\s*ft|per\s*sq\.?\s*ft|per\s*sqft|\/\s*sf\b)/i.test(raw)) return null
+  return parseMoneyRange(raw)
 }
 
 function formatPaybackRangeYears(outOfPocketValue: string | null | undefined, annualRentValue: string | null | undefined): string | null {
@@ -585,6 +629,22 @@ export default function Advisor() {
   const annualGrossEffective = annualGross || annualGrossFallback
   const monthlyRentEffective = monthlyRent || monthlyRentFallback || monthlyRentFromAnnualFallback
   const paybackFallback = formatPaybackRangeYears(outOfPocket, annualGrossEffective)
+  const constructionCurrency = detectCurrencyCode(constructionCost, rentSignals?.currency || 'CAD')
+  const constructionCostEffective = (() => {
+    const perSqftRange = parsePerSqftCostRange(constructionCost)
+    const areaRange = parseSqftRange(matchedSize || estimatedCurrentSize)
+    if (perSqftRange && areaRange) {
+      const totalRange: MoneyRange = {
+        low: perSqftRange.low * areaRange.low,
+        high: perSqftRange.high * areaRange.high,
+      }
+      return `${formatMoneyRange(totalRange, constructionCurrency)} (total building estimate)`
+    }
+
+    const parsedConstruction = parseMoneyRange(constructionCost)
+    if (parsedConstruction) return formatMoneyRange(parsedConstruction, constructionCurrency)
+    return constructionCost || null
+  })()
   const pendingMetricLabel = (loading || rendering || addressResearchLoading)
     ? 'Calculating...'
     : 'Needs follow-up details'
@@ -593,7 +653,7 @@ export default function Advisor() {
     { label: 'Image Size Estimate', value: estimatedCurrentSize || pendingMetricLabel },
     { label: 'Documented Size', value: documentedSize || pendingMetricLabel },
     { label: 'Matched Size', value: matchedSize || estimatedCurrentSize || pendingMetricLabel },
-    { label: 'Construction Cost', value: constructionCost || pendingMetricLabel },
+    { label: 'Construction Cost (Total Building)', value: constructionCostEffective || pendingMetricLabel },
     { label: 'Permit & Soft Costs', value: permitSoftCosts || pendingMetricLabel },
     { label: 'Total Out-of-Pocket', value: outOfPocket || pendingMetricLabel },
     { label: 'Monthly Rent', value: monthlyRentEffective || pendingMetricLabel },

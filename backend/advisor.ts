@@ -39,7 +39,7 @@ How to calculate:
 2. Use the current image to estimate rough interior size in sqft.
 3. Cross-check that estimate against document data; if docs are missing, say uncertainty is higher.
 4. Compare current image vs target image (if provided) to infer renovation scope level and complexity.
-5. Provide construction cost and total out-of-pocket ranges in CAD.
+5. Provide **total construction cost for the entire building/project** (not per-sqft only) and total out-of-pocket ranges in CAD.
 6. Include permit + soft costs in out-of-pocket. Reasonable soft-cost assumptions are acceptable when exact values are unknown.
 7. Estimate rental return from market benchmarks and the matched rentable area. When nearby condo/house rent comparables are provided, explicitly use them as the primary local rent signal.
 8. State assumptions clearly and keep math internally consistent.
@@ -51,7 +51,7 @@ The first reply MUST include these exact bold labels on separate lines (in this 
 **Estimated current size from image:** [value]
 **Documented size:** [value or "Not provided"]
 **Matched size used for estimate:** [value]
-**Construction cost:** [CAD range + short basis]
+**Construction cost:** [TOTAL building construction cost in CAD range + short basis; if you mention a per-sqft rate, also show the computed total range]
 **Permit & soft costs:** [CAD range + short basis]
 **Total out-of-pocket:** [CAD range]
 **Estimated monthly rent:** [CAD range]
@@ -1293,7 +1293,8 @@ function buildAddressResearchContextText(addressResearch: AdvisorAddressResearch
 
 function buildContextText(context: AdvisorSessionInput, firstMessage?: string): string {
   const lines: string[] = [
-    'Use the attached images/documents to estimate construction cost, total out-of-pocket cash, and rental return.',
+    'Use the attached images/documents to estimate total construction cost for the full building/project, total out-of-pocket cash, and rental return.',
+    'Construction cost output must be the whole-building total range in CAD (not only a per-sqft figure).',
   ];
 
   if (context.location?.trim()) lines.push(`Location: ${context.location.trim()}.`);
