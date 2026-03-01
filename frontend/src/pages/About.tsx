@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 export default function About() {
   return (
     <div className="page page--about">
-      <h1 className="page__title">About HomeKey</h1>
+      <h1 className="page__title">About Reinnovate</h1>
       <p className="page__lead">
         We help people design and renovate their properties—especially when converting to Airbnb, adding suites, or turning a house into multiple rental units.
       </p>
@@ -11,7 +11,7 @@ export default function About() {
       <section className="about-block">
         <h2>Our mission</h2>
         <p>
-          HomeKey is built for homeowners and investors who want to renovate or convert their property. Whether you’re turning a basement into a suite, splitting a house for short-term rental, or planning an ADU, our AI advisor uses your floor plan and location to suggest layouts, ballpark costs, permits, and design—so you can plan with confidence before talking to contractors or lawyers.
+          Reinnovate is built for homeowners and investors who want to renovate or convert their property. Whether you’re turning a basement into a suite, splitting a house for short-term rental, or planning an ADU, our AI advisor uses your floor plan and location to suggest layouts, ballpark costs, permits, and design—so you can plan with confidence before talking to contractors or lawyers.
         </p>
       </section>
 
@@ -45,7 +45,7 @@ export default function About() {
       <section className="about-block">
         <h2>Get in touch</h2>
         <p>
-          Questions about the renovation advisor or your project? Visit our <Link to="/contact">Contact</Link> page or reach out at <a href="mailto:hello@homekey.com">hello@homekey.com</a>.
+          Questions about the renovation advisor or your project? Visit our <Link to="/contact">Contact</Link> page or reach out at <a href="mailto:hello@reinnovate.com">hello@reinnovate.com</a>.
         </p>
       </section>
     </div>

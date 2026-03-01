@@ -54,7 +54,7 @@ export default function Contact() {
           <h3>Other ways to reach us</h3>
           <dl className="contact-details">
             <dt>Email</dt>
-            <dd><a href="mailto:hello@homekey.com">hello@homekey.com</a></dd>
+            <dd><a href="mailto:hello@reinnovate.com">hello@reinnovate.com</a></dd>
             <dt>Phone</dt>
             <dd><a href="tel:+14155551234">(415) 555-1234</a></dd>
             <dt>Office</dt>

@@ -36,7 +36,7 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       <Link to="/" className="navbar__brand">
-        HomeKey
+        Reinnovate
       </Link>
       <ul className="navbar__links">
         <li><Link to="/">Home</Link></li>
