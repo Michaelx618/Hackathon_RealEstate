@@ -362,6 +362,50 @@ function formatAnnualFromMonthlyRange(low?: number, high?: number, currency = 'C
   return `${formatCurrency(annualLow, currency)} - ${formatCurrency(annualHigh, currency)} / year`
 }
 
+type MoneyRange = {
+  low: number
+  high: number
+}
+
+function parseMoneyToken(raw: string): number | null {
+  const cleaned = raw.trim().replace(/,/g, '')
+  const suffix = cleaned.slice(-1).toLowerCase()
+  const numericPart = suffix === 'k' || suffix === 'm' ? cleaned.slice(0, -1) : cleaned
+  const parsed = Number(numericPart)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  if (suffix === 'k') return parsed * 1_000
+  if (suffix === 'm') return parsed * 1_000_000
+  return parsed
+}
+
+function parseMoneyRange(raw: string | null | undefined): MoneyRange | null {
+  if (!raw) return null
+  const matches = [...raw.matchAll(/(?:C\$|CAD\s*\$?|US\$\s*|USD\s*\$?|\$)\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.\d+)?[kKmM]?)/g)]
+  const values = matches
+    .map((m) => m[1] || '')
+    .map((value) => parseMoneyToken(value))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    .slice(0, 2)
+
+  if (values.length === 0) return null
+  if (values.length === 1) return { low: values[0], high: values[0] }
+  return { low: Math.min(values[0], values[1]), high: Math.max(values[0], values[1]) }
+}
+
+function formatPaybackRangeYears(outOfPocketValue: string | null | undefined, annualRentValue: string | null | undefined): string | null {
+  const outPocketRange = parseMoneyRange(outOfPocketValue)
+  const annualRange = parseMoneyRange(annualRentValue)
+  if (!outPocketRange || !annualRange) return null
+  if (annualRange.low <= 0 || annualRange.high <= 0) return null
+  const lowYears = outPocketRange.low / annualRange.high
+  const highYears = outPocketRange.high / annualRange.low
+  if (!Number.isFinite(lowYears) || !Number.isFinite(highYears) || lowYears <= 0 || highYears <= 0) return null
+  const safeLow = Math.round(lowYears * 10) / 10
+  const safeHigh = Math.round(highYears * 10) / 10
+  if (safeLow === safeHigh) return `${safeLow.toFixed(1)} years`
+  return `${safeLow.toFixed(1)} - ${safeHigh.toFixed(1)} years`
+}
+
 function processImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -528,17 +572,33 @@ export default function Advisor() {
     rentSignals?.blendedMonthlyHigh,
     rentSignals?.currency || 'CAD',
   )
+  const monthlyRentFromAnnualFallback = annualGross
+    ? (() => {
+      const parsedAnnual = parseMoneyRange(annualGross)
+      if (!parsedAnnual) return null
+      const monthlyLow = Math.round(parsedAnnual.low / 12)
+      const monthlyHigh = Math.round(parsedAnnual.high / 12)
+      const currency = rentSignals?.currency || 'CAD'
+      return `${formatCurrency(monthlyLow, currency)} - ${formatCurrency(monthlyHigh, currency)} / month`
+    })()
+    : null
+  const annualGrossEffective = annualGross || annualGrossFallback
+  const monthlyRentEffective = monthlyRent || monthlyRentFallback || monthlyRentFromAnnualFallback
+  const paybackFallback = formatPaybackRangeYears(outOfPocket, annualGrossEffective)
+  const pendingMetricLabel = (loading || rendering || addressResearchLoading)
+    ? 'Calculating...'
+    : 'Needs follow-up details'
 
   const metricCards = [
-    { label: 'Image Size Estimate', value: estimatedCurrentSize || 'Not detected yet' },
-    { label: 'Documented Size', value: documentedSize || 'Not detected yet' },
-    { label: 'Matched Size', value: matchedSize || 'Not detected yet' },
-    { label: 'Construction Cost', value: constructionCost || 'Not detected yet' },
-    { label: 'Permit & Soft Costs', value: permitSoftCosts || 'Not detected yet' },
-    { label: 'Total Out-of-Pocket', value: outOfPocket || 'Not detected yet' },
-    { label: 'Monthly Rent', value: monthlyRent || monthlyRentFallback || 'Not detected yet' },
-    { label: 'Annual Gross Rent', value: annualGross || annualGrossFallback || 'Not detected yet' },
-    { label: 'Simple Payback', value: payback || 'Not detected yet' },
+    { label: 'Image Size Estimate', value: estimatedCurrentSize || pendingMetricLabel },
+    { label: 'Documented Size', value: documentedSize || pendingMetricLabel },
+    { label: 'Matched Size', value: matchedSize || estimatedCurrentSize || pendingMetricLabel },
+    { label: 'Construction Cost', value: constructionCost || pendingMetricLabel },
+    { label: 'Permit & Soft Costs', value: permitSoftCosts || pendingMetricLabel },
+    { label: 'Total Out-of-Pocket', value: outOfPocket || pendingMetricLabel },
+    { label: 'Monthly Rent', value: monthlyRentEffective || pendingMetricLabel },
+    { label: 'Annual Gross Rent', value: annualGrossEffective || pendingMetricLabel },
+    { label: 'Simple Payback', value: payback || paybackFallback || pendingMetricLabel },
   ]
 
   const detailedPricing = extractSectionBulletItems(allAssistantText, [
@@ -1070,7 +1130,7 @@ export default function Advisor() {
                 </div>
                 <div className="advisor-timeline-badge" role="status">
                   <span className="advisor-timeline-badge__label">Timeline</span>
-                  <span className="advisor-timeline-badge__value">{timeline || 'Not detected yet'}</span>
+                  <span className="advisor-timeline-badge__value">{timeline || pendingMetricLabel}</span>
                 </div>
                 <div className="advisor-key-factors" role="region" aria-label="Key factors">
                   <h3 className="advisor-key-factors__title">Key factors</h3>
@@ -1092,7 +1152,7 @@ export default function Advisor() {
                   {metricCards.map((metric) => (
                     <div className="advisor-metric-card" key={metric.label}>
                       <span className="advisor-metric-card__label">{metric.label}</span>
-                      <span className={`advisor-metric-card__value${metric.value === 'Not detected yet' ? ' advisor-metric-card__value--placeholder' : ''}`}>{metric.value}</span>
+                      <span className={`advisor-metric-card__value${metric.value === pendingMetricLabel ? ' advisor-metric-card__value--placeholder' : ''}`}>{metric.value}</span>
                     </div>
                   ))}
                 </div>
@@ -1243,7 +1303,7 @@ export default function Advisor() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="advisor-detail-card__empty">Not detected yet. Ask: "Provide detailed pricing breakdown with line items."</p>
+                  <p className="advisor-detail-card__empty">No detailed pricing lines yet. Ask: "Provide detailed pricing breakdown with line items."</p>
                 )}
               </div>
 
@@ -1256,7 +1316,7 @@ export default function Advisor() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="advisor-detail-card__empty">Not detected yet. Ask: "Show full out-of-pocket math breakdown."</p>
+                  <p className="advisor-detail-card__empty">No out-of-pocket line items yet. Ask: "Show full out-of-pocket math breakdown."</p>
                 )}
               </div>
 
@@ -1269,7 +1329,7 @@ export default function Advisor() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="advisor-detail-card__empty">Not detected yet. Ask: "Show monthly/annual return breakdown and ROI."</p>
+                  <p className="advisor-detail-card__empty">No return line items yet. Ask: "Show monthly/annual return breakdown and ROI."</p>
                 )}
               </div>
 
