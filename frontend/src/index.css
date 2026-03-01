@@ -29,18 +29,75 @@
   --hero-text: #f9fafb;
   --radius: 12px;
   --radius-sm: 8px;
+
+  /* Gradients (same palette, gradient versions) */
+  --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  --gradient-hero: linear-gradient(135deg, var(--hero-from) 0%, var(--hero-to) 100%);
+  --gradient-bg: linear-gradient(180deg, #fafafa 0%, #f5f3ff 50%, #fafafa 100%);
+  --gradient-nav: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,255,0.95) 100%);
+  --gradient-card: linear-gradient(180deg, #ffffff 0%, #fafbff 100%);
+  --gradient-muted: linear-gradient(180deg, #f5f5f4 0%, #f0effa 100%);
 }
 
 * {
   box-sizing: border-box;
 }
 
+@keyframes bg-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: var(--bg);
+  background: var(--gradient-bg);
+  background-size: 200% 200%;
+  background-attachment: fixed;
   color: var(--text);
+  animation: bg-shift 18s ease-in-out infinite;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.04) 25%,
+    rgba(59, 130, 246, 0.04) 50%,
+    rgba(99, 102, 241, 0.04) 75%,
+    transparent 100%
+  );
+  background-size: 400% 400%;
+  animation: bg-shift 22s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body,
+  body::before {
+    animation: none;
+  }
+}
+
+.app {
+  position: relative;
+  z-index: 1;
 }
 
 a {

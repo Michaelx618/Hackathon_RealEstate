@@ -15,7 +15,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 1rem 2rem;
-  background: var(--nav-bg);
+  background: var(--gradient-nav);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -54,7 +55,7 @@
 
 /* Hero */
 .hero {
-  background: linear-gradient(135deg, var(--hero-from) 0%, var(--hero-to) 100%);
+  background: var(--gradient-hero);
   color: var(--hero-text);
   padding: 4rem 2rem 5rem;
   text-align: center;
@@ -124,13 +125,15 @@
   border-radius: 8px;
   font-size: 1rem;
   font-weight: 600;
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
   cursor: pointer;
+  transition: filter 0.2s, box-shadow 0.2s;
 }
 
 .hero__btn:hover {
-  background: var(--primary-dark);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
 }
 
 /* Section */
@@ -173,42 +176,79 @@
 }
 
 .listing-card {
-  background: var(--card-bg);
+  background: var(--gradient-card);
   border-radius: 12px;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
   border: 1px solid var(--border);
-  transition: box-shadow 0.2s, transform 0.2s;
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+  animation: card-enter 0.5s ease-out both;
 }
 
+.listings .listing-card:nth-child(1) { animation-delay: 0.05s; }
+.listings .listing-card:nth-child(2) { animation-delay: 0.1s; }
+.listings .listing-card:nth-child(3) { animation-delay: 0.15s; }
+.listings .listing-card:nth-child(4) { animation-delay: 0.2s; }
+.listings .listing-card:nth-child(5) { animation-delay: 0.25s; }
+.listings .listing-card:nth-child(6) { animation-delay: 0.3s; }
+.listings .listing-card:nth-child(7) { animation-delay: 0.35s; }
+.listings .listing-card:nth-child(8) { animation-delay: 0.4s; }
+.listings .listing-card:nth-child(9) { animation-delay: 0.45s; }
+.listings .listing-card:nth-child(n+10) { animation-delay: 0.5s; }
+
 .listing-card:hover {
-  box-shadow: var(--shadow);
-  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-6px) scale(1.02);
+}
+
+.listing-card--button {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  border: 1px solid var(--border);
 }
 
 .listing-card__image-wrap {
   position: relative;
   aspect-ratio: 4/3;
-  background: var(--muted);
+  background: var(--gradient-muted);
+  overflow: hidden;
 }
 
 .listing-card__image {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.listing-card:hover .listing-card__image {
+  transform: scale(1.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listing-card {
+    animation: none;
+  }
+  .listing-card:hover .listing-card__image {
+    transform: none;
+  }
 }
 
 .listing-card__price {
   position: absolute;
   bottom: 0.75rem;
   left: 0.75rem;
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
   padding: 0.35rem 0.6rem;
   border-radius: 6px;
   font-weight: 700;
   font-size: 0.95rem;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
 }
 
 .listing-card__body {
@@ -241,11 +281,13 @@
 /* CTA */
 .cta {
   text-align: center;
-  /* use a softened version of hero gradient for CTA to keep palette cohesive */
-  background: linear-gradient(135deg, var(--hero-from) 0%, var(--hero-to) 100%);
+  background: var(--gradient-hero);
   color: white;
   border-radius: 12px;
-  margin: 0 2rem 3rem;
+  margin: 0 auto 3rem;
+  max-width: 640px;
+  width: 100%;
+  box-shadow: 0 8px 32px rgba(79, 70, 229, 0.2);
 }
 
 .cta__text {
@@ -263,12 +305,14 @@
 }
 
 .btn--primary {
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
+  transition: filter 0.2s, box-shadow 0.2s;
 }
 
 .btn--primary:hover {
-  background: var(--primary-dark);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
 }
 
 /* Page layout */
@@ -342,8 +386,9 @@
 }
 
 .listing-card__badge--sale {
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
 }
 
 .listing-card__badge--rent {
@@ -392,8 +437,9 @@
 }
 
 .detail__badge--sale {
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
 }
 
 .detail__badge--rent {
@@ -433,6 +479,226 @@
   line-height: 1.6;
   color: var(--text);
 }
+
+/* Listing popup / modal */
+.listing-popup__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1.5rem;
+  animation: popup-fade-in 0.2s ease-out;
+}
+
+@keyframes popup-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.listing-popup {
+  position: relative;
+  background: var(--gradient-card);
+  border-radius: 16px;
+  max-width: 520px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg), 0 24px 48px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  animation: popup-scale-in 0.25s ease-out;
+}
+
+@keyframes popup-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.listing-popup__close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: background 0.2s, color 0.2s;
+}
+
+.listing-popup__close:hover {
+  background: var(--border);
+}
+
+.listing-popup__image-wrap {
+  position: relative;
+  aspect-ratio: 16/9;
+  background: var(--gradient-muted);
+  border-radius: 16px 16px 0 0;
+  overflow: hidden;
+}
+
+.listing-popup__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.listing-popup__badge {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.listing-popup__badge--sale {
+  background: var(--gradient-primary);
+  color: white;
+}
+
+.listing-popup__badge--rent {
+  background: var(--text);
+  color: white;
+}
+
+.listing-popup__body {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.listing-popup__address {
+  font-size: 1.35rem;
+  margin: 0 0 0.25rem;
+  color: var(--text);
+}
+
+.listing-popup__location {
+  margin: 0 0 0.5rem;
+  color: var(--muted-text);
+  font-size: 0.95rem;
+}
+
+.listing-popup__price {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin: 0 0 0.75rem;
+}
+
+.listing-popup__meta {
+  display: flex;
+  gap: 1rem;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--muted-text);
+}
+
+.listing-popup__description {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--text);
+  margin: 0 0 1.25rem;
+}
+
+.listing-popup__layout {
+  margin-bottom: 1.25rem;
+  padding: 1rem;
+  background: var(--muted);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.listing-popup__layout-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+  color: var(--text);
+}
+
+.listing-popup__layout-hint {
+  font-size: 0.8rem;
+  color: var(--muted-text);
+  margin: 0 0 0.75rem;
+}
+
+.listing-popup__layout-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 40px repeat(3, 48px);
+  grid-template-areas:
+    'living living'
+    'kitchen dining'
+    'bed1 bed2'
+    'bath bed3';
+  gap: 6px;
+}
+
+.listing-popup__layout-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.listing-popup__layout-room-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.listing-popup__layout-room-area {
+  font-size: 0.7rem;
+  color: var(--muted-text);
+}
+
+.listing-popup__actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.listing-popup__btn-secondary {
+  background: var(--muted);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.listing-popup__btn-secondary:hover {
+  background: var(--border);
+}
+
+.listing-popup__layout-room:nth-child(1) { grid-area: living; }
+.listing-popup__layout-room:nth-child(2) { grid-area: kitchen; }
+.listing-popup__layout-room:nth-child(3) { grid-area: dining; }
+.listing-popup__layout-room:nth-child(4) { grid-area: bed1; }
+.listing-popup__layout-room:nth-child(5) { grid-area: bed2; }
+.listing-popup__layout-room:nth-child(6) { grid-area: bath; }
+.listing-popup__layout-room:nth-child(7) { grid-area: bed3; }
 
 /* About page */
 .about-block {
@@ -1497,15 +1763,22 @@ html.dark {
   --shadow: 0 6px 18px rgba(2,6,23,0.6);
   --primary: #8b5cf6; /* violet-500 */
   --primary-dark: #7c3aed; /* violet-600 */
-  /* hero gradient for dark mode */
   --hero-from: #1e3a8a; /* indigo-900 */
   --hero-to: #2563eb; /* blue-600 */
   --hero-text: #f3f4f6;
+
+  /* Dark mode gradients (same structure as light, darker palette) */
+  --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  --gradient-hero: linear-gradient(135deg, var(--hero-from) 0%, var(--hero-to) 100%);
+  --gradient-bg: linear-gradient(180deg, #0b1220 0%, #0f172a 50%, #0b1220 100%);
+  --gradient-nav: linear-gradient(180deg, rgba(7,17,38,0.98) 0%, rgba(15,23,36,0.95) 100%);
+  --gradient-card: linear-gradient(180deg, #0f1724 0%, #1e293b 100%);
+  --gradient-muted: linear-gradient(180deg, #081223 0%, #0f172a 100%);
 }
 
-/* smooth color transitions */
+/* smooth color transitions (include background for gradient theme switch) */
 body, .navbar, .main, .page, .listing-card {
-  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  transition: background 0.25s ease, background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
 .advisor-chat__msg--user {

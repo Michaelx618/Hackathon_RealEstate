@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listings } from '../data/listings'
+import ListingPopup from '../components/ListingPopup'
+import type { Listing } from '../data/listings'
 
 function formatPrice(listing: { price: number; type: string }) {
   if (listing.type === 'rent') return `$${listing.price.toLocaleString()}/mo`
@@ -13,6 +15,7 @@ const cities = [...new Set(listings.map((l) => l.city))].sort()
 export default function Listings() {
   const [cityFilter, setCityFilter] = useState<string>('')
   const [typeFilter, setTypeFilter] = useState<'all' | 'sale' | 'rent'>('all')
+  const [popupListing, setPopupListing] = useState<Listing | null>(null)
 
   const filtered = listings.filter((listing) => {
     const matchCity = !cityFilter || listing.city === cityFilter
@@ -51,7 +54,12 @@ export default function Listings() {
 
       <div className="listings listings--grid">
         {filtered.map((listing) => (
-          <Link to={`/listings/${listing.id}`} key={listing.id} className="listing-card">
+          <button
+            type="button"
+            key={listing.id}
+            className="listing-card listing-card--button"
+            onClick={() => setPopupListing(listing)}
+          >
             <div className="listing-card__image-wrap">
               <img src={listing.image} alt={listing.address} className="listing-card__image" />
               <span className="listing-card__price">{formatPrice(listing)}</span>
@@ -68,9 +76,11 @@ export default function Listings() {
                 <li>{listing.sqft.toLocaleString()} sqft</li>
               </ul>
             </div>
-          </Link>
+          </button>
         ))}
       </div>
+
+      <ListingPopup listing={popupListing} onClose={() => setPopupListing(null)} />
 
       {filtered.length === 0 && (
         <p className="listings__empty">No listings match your filters. Try adjusting the filters above.</p>

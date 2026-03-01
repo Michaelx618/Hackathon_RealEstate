@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { getFeaturedListings } from '../data/listings'
+import ListingPopup from '../components/ListingPopup'
+import type { Listing } from '../data/listings'
 
 function formatPrice(listing: { price: number; type: string }) {
   if (listing.type === 'rent') return `$${listing.price.toLocaleString()}/mo`
@@ -11,6 +13,7 @@ function formatPrice(listing: { price: number; type: string }) {
 export default function Home() {
   const featuredListings = getFeaturedListings()
   const [location, setLocation] = useState('')
+  const [popupListing, setPopupListing] = useState<Listing | null>(null)
   const navigate = useNavigate()
 
   const handleSearch = () => {
@@ -50,7 +53,12 @@ export default function Home() {
         <p className="section__subtitle">Browse sample listings or jump straight to designing your own.</p>
         <div className="listings">
           {featuredListings.map((listing) => (
-            <Link to={`/listings/${listing.id}`} key={listing.id} className="listing-card">
+            <button
+              type="button"
+              key={listing.id}
+              className="listing-card listing-card--button"
+              onClick={() => setPopupListing(listing)}
+            >
               <div className="listing-card__image-wrap">
                 <img src={listing.image} alt={listing.address} className="listing-card__image" />
                 <span className="listing-card__price">{formatPrice(listing)}</span>
@@ -64,9 +72,10 @@ export default function Home() {
                   <li>{listing.sqft.toLocaleString()} sqft</li>
                 </ul>
               </div>
-            </Link>
+            </button>
           ))}
         </div>
+        <ListingPopup listing={popupListing} onClose={() => setPopupListing(null)} />
         <Link to="/listings" className="section__link">View all listings →</Link>
       </section>
 
