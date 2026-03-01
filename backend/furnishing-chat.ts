@@ -8,6 +8,7 @@ const MAX_OPTIONS_PER_SLOT = 4;
 const MAX_REFERENCE_IMAGES_FOR_RENDER = 4;
 const MAX_LINKS_PER_TURN = 10;
 const MAX_MESSAGE_HISTORY = 14;
+const MAX_LAYOUT_ENTRIES = 16;
 const SLOT_PLANNER_PROMPT = `You are an interior furnishing planner for an interactive chat.
 
 Task:
@@ -164,6 +165,9 @@ function asPositiveNumber(value) {
     if (parsed <= 0)
         return undefined;
     return parsed;
+}
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
 }
 function extractCm(raw) {
     if (!raw)
@@ -1172,12 +1176,84 @@ async function fetchImageAsFile(url, fileNamePrefix) {
         return { error: error instanceof Error ? error.message : `Failed to fetch image ${url}` };
     }
 }
+function toSelectionKey(slotId, optionId) {
+    return `${slotId}::${optionId}`;
+}
+function alignLayoutWithSelection(layoutPlan, selectedItems) {
+    if (!Array.isArray(layoutPlan) || layoutPlan.length === 0)
+        return [];
+    const allowedKeys = new Set(selectedItems.map((item) => toSelectionKey(item.slotId, item.optionId)));
+    const normalized = [];
+    for (const raw of layoutPlan.slice(0, MAX_LAYOUT_ENTRIES)) {
+        if (!raw || typeof raw !== 'object')
+            continue;
+        const slotId = optionalString(raw.slotId);
+        const optionId = optionalString(raw.optionId);
+        const x = asNumber(raw.x);
+        const y = asNumber(raw.y);
+        const scale = asNumber(raw.scale);
+        if (!slotId || !optionId || typeof x !== 'number' || typeof y !== 'number')
+            continue;
+        if (!allowedKeys.has(toSelectionKey(slotId, optionId)))
+            continue;
+        normalized.push({
+            slotId,
+            optionId,
+            x: roundMoney(clamp(x, 0, 1)),
+            y: roundMoney(clamp(y, 0, 1)),
+            scale: roundMoney(clamp(typeof scale === 'number' ? scale : 1, 0.4, 1.8)),
+        });
+    }
+    return normalized;
+}
+function describeHorizontalZone(x) {
+    if (x <= 0.2)
+        return 'left side';
+    if (x <= 0.4)
+        return 'center-left';
+    if (x <= 0.6)
+        return 'center';
+    if (x <= 0.8)
+        return 'center-right';
+    return 'right side';
+}
+function describeVerticalZone(y) {
+    if (y <= 0.22)
+        return 'upper';
+    if (y <= 0.42)
+        return 'upper-middle';
+    if (y <= 0.62)
+        return 'middle';
+    if (y <= 0.82)
+        return 'lower-middle';
+    return 'lower';
+}
+function buildLayoutInstructionLines(layoutPlan, selectedItems) {
+    if (!Array.isArray(layoutPlan) || layoutPlan.length === 0)
+        return [];
+    const itemByKey = new Map(selectedItems.map((item) => [toSelectionKey(item.slotId, item.optionId), item]));
+    const lines = [];
+    for (const placement of layoutPlan.slice(0, MAX_LAYOUT_ENTRIES)) {
+        const key = toSelectionKey(placement.slotId, placement.optionId);
+        const item = itemByKey.get(key);
+        if (!item)
+            continue;
+        const xPct = Math.round(placement.x * 100);
+        const yPct = Math.round(placement.y * 100);
+        const horizontal = describeHorizontalZone(placement.x);
+        const vertical = describeVerticalZone(placement.y);
+        lines.push(`- ${item.name}: place around ${vertical} ${horizontal} (x ${xPct}%, y ${yPct}%), scale ${placement.scale.toFixed(2)}.`);
+    }
+    return lines;
+}
 async function generatePreviewImage(session, selectedItems, spacing) {
     const notes = [];
     if (selectedItems.length === 0) {
         notes.push('No selected items yet, preview not rendered.');
         return { notes };
     }
+    session.layoutPlan = alignLayoutWithSelection(session.layoutPlan, selectedItems);
+    const layoutInstructions = buildLayoutInstructionLines(session.layoutPlan, selectedItems);
     const selectedList = selectedItems.map((item, index) => {
         const size = item.dimensionsText
             || ((item.widthCm && item.depthCm)
@@ -1185,13 +1261,26 @@ async function generatePreviewImage(session, selectedItems, spacing) {
                 : 'size not available');
         return `${index + 1}. ${item.name} (qty ${item.quantity}, size ${size})`;
     }).join('\n');
-    const prompt = [
-        'Preserve the exact room geometry, perspective, wall/floor structure, and window positions from the original image.',
+    const promptParts = [
+        'STRICT EDIT-ONLY RULES (must follow):',
+        [
+            '- Keep camera angle, lens/FOV, perspective, framing, horizon, crop, and orientation EXACTLY the same as the original photo.',
+            '- Do not rotate, mirror, reframe, zoom, or change viewpoint.',
+            '- Do not alter room architecture or fixed elements (walls, ceiling, floor, windows, doors, built-in cabinets, appliances, outlets, trim, exterior view).',
+            '- Keep global lighting/exposure/white balance/shadows consistent with source image; no whole-image restyling.',
+            '- Only add/replace movable furniture and decor from the selected item list.',
+            '- If an item cannot fit, skip that item instead of changing camera angle or room structure.',
+        ].join('\n'),
         'Furnish the room with the selected real products below, keeping realistic scale and non-overlapping layout.',
         selectedList,
         `Spacing target: fit status ${spacing.fitStatus}. Keep at least ~80-90 cm circulation where feasible.`,
         'If everything cannot fit, prioritize main seating/bed/storage items first while keeping a believable design.',
-    ].join('\n\n');
+    ];
+    if (layoutInstructions.length > 0) {
+        promptParts.push('User-adjusted placement anchors (from drag editor). Follow these anchors closely while keeping realistic fit and no overlap:');
+        promptParts.push(layoutInstructions.join('\n'));
+    }
+    const prompt = promptParts.join('\n\n');
     try {
         const previewImageDataUrl = await generateGeminiEditedImage({
             prompt,
@@ -1229,11 +1318,21 @@ function ensureSession(sessionId) {
 function applySelectionAction(session, action) {
     if (!action)
         return undefined;
+    if (action.type === 'update_layout') {
+        const selectedItems = collectSelectedItems(session.slots);
+        const nextLayout = alignLayoutWithSelection(action.placements, selectedItems);
+        session.layoutPlan = nextLayout;
+        if (nextLayout.length === 0) {
+            return 'Received layout update, but no markers matched the current selected items.';
+        }
+        return `Updated preview layout with ${nextLayout.length} placement marker(s).`;
+    }
     const slot = session.slots.find((entry) => entry.slotId === action.slotId);
     if (!slot)
         return `Could not find slot ${action.slotId}.`;
     if (action.type === 'clear_slot') {
         slot.selectedOptionId = undefined;
+        session.layoutPlan = (session.layoutPlan || []).filter((entry) => entry.slotId !== slot.slotId);
         return `Cleared selection for ${slot.label}.`;
     }
     if (action.type === 'select_option') {
@@ -1241,6 +1340,7 @@ function applySelectionAction(session, action) {
         if (!candidate)
             return `Could not find that option in ${slot.label}.`;
         slot.selectedOptionId = candidate.optionId;
+        session.layoutPlan = (session.layoutPlan || []).filter((entry) => entry.slotId !== slot.slotId);
         return `Updated ${slot.label} to ${candidate.name}.`;
     }
     return undefined;
@@ -1306,6 +1406,7 @@ export function createFurnishingSession(input) {
         slots: [],
         roomProfile: undefined,
         previewImageDataUrl: undefined,
+        layoutPlan: [],
         optionCache: new Map(),
         notes: [],
     };
@@ -1348,6 +1449,7 @@ export async function runFurnishingTurn(sessionId, input) {
     }
     const roomProfile = await estimateRoomProfile(session);
     const selectedItems = collectSelectedItems(session.slots);
+    session.layoutPlan = alignLayoutWithSelection(session.layoutPlan, selectedItems);
     const totals = computeTotals(selectedItems, session.context.market.currency);
     const spacing = analyzeSpacing(roomProfile, selectedItems);
     const render = await generatePreviewImage(session, selectedItems, spacing);

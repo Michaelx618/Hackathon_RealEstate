@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 
 type ChatMessage = {
   role: 'user' | 'assistant'
@@ -80,9 +81,49 @@ type FurnishingResponse = {
   notes: string[]
 }
 
+type LayoutPlacement = {
+  slotId: string
+  optionId: string
+  label: string
+  x: number
+  y: number
+  scale: number
+}
+
+type LayoutPlacementPayload = {
+  slotId: string
+  optionId: string
+  x: number
+  y: number
+  scale: number
+}
+
+type LayoutDragState = {
+  key: string
+  pointerId: number
+  offsetX: number
+  offsetY: number
+  bounds: DOMRect
+}
+
 const MAX_FILE_SIZE_MB = 12
 const MAX_IMAGE_DIMENSION = 1600
 const JPEG_QUALITY = 0.85
+const MIN_LAYOUT_COORD = 0.02
+const MAX_LAYOUT_COORD = 0.98
+const MIN_LAYOUT_SCALE = 0.65
+const MAX_LAYOUT_SCALE = 1.4
+
+const DEFAULT_LAYOUT_POINTS: Array<{ x: number; y: number }> = [
+  { x: 0.22, y: 0.25 },
+  { x: 0.5, y: 0.23 },
+  { x: 0.78, y: 0.26 },
+  { x: 0.24, y: 0.53 },
+  { x: 0.5, y: 0.52 },
+  { x: 0.77, y: 0.56 },
+  { x: 0.35, y: 0.8 },
+  { x: 0.65, y: 0.8 },
+]
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -196,6 +237,67 @@ function getPreviewUnavailableReason(result: FurnishingResponse | null): string 
   return `${compact.slice(0, 217)}...`
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function toPlacementKey(slotId: string, optionId: string): string {
+  return `${slotId}::${optionId}`
+}
+
+function estimatePlacementScale(item: FurnishingSelectedItem): number {
+  if (item.quantity > 1) return 0.9
+  const width = item.widthCm || 0
+  if (width >= 260) return 1.15
+  if (width >= 180) return 1.05
+  if (width > 0 && width <= 85) return 0.88
+  return 1
+}
+
+function buildLayoutForItems(
+  items: FurnishingSelectedItem[],
+  previous: LayoutPlacement[],
+): LayoutPlacement[] {
+  const previousByKey = new Map(
+    previous.map((placement) => [toPlacementKey(placement.slotId, placement.optionId), placement]),
+  )
+
+  return items.map((item, index) => {
+    const key = toPlacementKey(item.slotId, item.optionId)
+    const existing = previousByKey.get(key)
+    if (existing) {
+      return {
+        ...existing,
+        label: item.name,
+        x: clamp(existing.x, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+        y: clamp(existing.y, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+        scale: clamp(existing.scale, MIN_LAYOUT_SCALE, MAX_LAYOUT_SCALE),
+      }
+    }
+
+    const base = DEFAULT_LAYOUT_POINTS[index % DEFAULT_LAYOUT_POINTS.length]
+    const row = Math.floor(index / DEFAULT_LAYOUT_POINTS.length)
+    return {
+      slotId: item.slotId,
+      optionId: item.optionId,
+      label: item.name,
+      x: clamp(base.x, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+      y: clamp(base.y + row * 0.07, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+      scale: estimatePlacementScale(item),
+    }
+  })
+}
+
+function toLayoutPayload(layout: LayoutPlacement[]): LayoutPlacementPayload[] {
+  return layout.map((placement) => ({
+    slotId: placement.slotId,
+    optionId: placement.optionId,
+    x: Number(clamp(placement.x, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD).toFixed(4)),
+    y: Number(clamp(placement.y, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD).toFixed(4)),
+    scale: Number(clamp(placement.scale, MIN_LAYOUT_SCALE, MAX_LAYOUT_SCALE).toFixed(3)),
+  }))
+}
+
 const apiBase = import.meta.env.VITE_API_URL ?? ''
 
 export default function FurnishingPreview() {
@@ -215,10 +317,16 @@ export default function FurnishingPreview() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [previewEditorOpen, setPreviewEditorOpen] = useState(false)
+  const [layoutPlacements, setLayoutPlacements] = useState<LayoutPlacement[]>([])
+  const [layoutDraft, setLayoutDraft] = useState<LayoutPlacement[]>([])
+  const [activePlacementKey, setActivePlacementKey] = useState<string | null>(null)
 
   const roomInputRef = useRef<HTMLInputElement>(null)
   const floorPlanInputRef = useRef<HTMLInputElement>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const editorCanvasRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<LayoutDragState | null>(null)
 
   const canStart = Boolean(roomImage && location.trim())
 
@@ -230,6 +338,70 @@ export default function FurnishingPreview() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
+
+  useEffect(() => {
+    if (!result) {
+      setLayoutPlacements([])
+      setLayoutDraft([])
+      setPreviewEditorOpen(false)
+      setActivePlacementKey(null)
+      dragStateRef.current = null
+      return
+    }
+    setLayoutPlacements((prev) => buildLayoutForItems(result.selectedItems, prev))
+  }, [result])
+
+  useEffect(() => {
+    if (!previewEditorOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPreviewEditorOpen(false)
+        setActivePlacementKey(null)
+        dragStateRef.current = null
+      }
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [previewEditorOpen])
+
+  useEffect(() => {
+    if (!previewEditorOpen) return
+    const onPointerMove = (event: PointerEvent) => {
+      const dragState = dragStateRef.current
+      if (!dragState || dragState.pointerId !== event.pointerId) return
+      const nextX = (event.clientX - dragState.bounds.left - dragState.offsetX) / dragState.bounds.width
+      const nextY = (event.clientY - dragState.bounds.top - dragState.offsetY) / dragState.bounds.height
+      setLayoutDraft((prev) => prev.map((placement) => {
+        if (toPlacementKey(placement.slotId, placement.optionId) !== dragState.key) return placement
+        return {
+          ...placement,
+          x: clamp(nextX, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+          y: clamp(nextY, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+        }
+      }))
+    }
+
+    const stopDragging = (event: PointerEvent) => {
+      const dragState = dragStateRef.current
+      if (!dragState || dragState.pointerId !== event.pointerId) return
+      dragStateRef.current = null
+      setActivePlacementKey(null)
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', stopDragging)
+    window.addEventListener('pointercancel', stopDragging)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', stopDragging)
+      window.removeEventListener('pointercancel', stopDragging)
+    }
+  }, [previewEditorOpen])
 
   const onSelectImage = async (
     fileList: FileList | null,
@@ -386,11 +558,152 @@ export default function FurnishingPreview() {
     }
   }
 
+  const openLayoutEditor = () => {
+    if (!result?.previewImageDataUrl) return
+    if (result.selectedItems.length === 0) {
+      setError('Select at least one furniture item before editing placement.')
+      return
+    }
+
+    const syncedLayout = buildLayoutForItems(result.selectedItems, layoutPlacements)
+    setLayoutPlacements(syncedLayout)
+    setLayoutDraft(syncedLayout)
+    setActivePlacementKey(null)
+    dragStateRef.current = null
+    setError(null)
+    setPreviewEditorOpen(true)
+  }
+
+  const closeLayoutEditor = () => {
+    setPreviewEditorOpen(false)
+    setLayoutDraft(layoutPlacements)
+    setActivePlacementKey(null)
+    dragStateRef.current = null
+  }
+
+  const resetDraftLayout = () => {
+    if (!result) return
+    setLayoutDraft(buildLayoutForItems(result.selectedItems, []))
+    setActivePlacementKey(null)
+    dragStateRef.current = null
+  }
+
+  const setPlacementPosition = (key: string, x: number, y: number) => {
+    setLayoutDraft((prev) => prev.map((entry) => {
+      if (toPlacementKey(entry.slotId, entry.optionId) !== key) return entry
+      return {
+        ...entry,
+        x: clamp(x, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+        y: clamp(y, MIN_LAYOUT_COORD, MAX_LAYOUT_COORD),
+      }
+    }))
+  }
+
+  const nudgePlacement = (placement: LayoutPlacement, deltaX: number, deltaY: number) => {
+    const key = toPlacementKey(placement.slotId, placement.optionId)
+    setPlacementPosition(key, placement.x + deltaX, placement.y + deltaY)
+  }
+
+  const beginPlacementDrag = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    placement: LayoutPlacement,
+  ) => {
+    const container = editorCanvasRef.current
+    if (!container) return
+    const bounds = container.getBoundingClientRect()
+    if (bounds.width <= 0 || bounds.height <= 0) return
+
+    const centerX = bounds.left + placement.x * bounds.width
+    const centerY = bounds.top + placement.y * bounds.height
+    const key = toPlacementKey(placement.slotId, placement.optionId)
+
+    dragStateRef.current = {
+      key,
+      pointerId: event.pointerId,
+      offsetX: event.clientX - centerX,
+      offsetY: event.clientY - centerY,
+      bounds,
+    }
+    setActivePlacementKey(key)
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  const moveActivePlacementToPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const activeKey = activePlacementKey
+    if (!activeKey) return
+    const target = event.target as HTMLElement
+    if (target.closest('.furnish-editor__chip')) return
+
+    const container = editorCanvasRef.current
+    if (!container) return
+    const bounds = container.getBoundingClientRect()
+    if (bounds.width <= 0 || bounds.height <= 0) return
+
+    const nextX = (event.clientX - bounds.left) / bounds.width
+    const nextY = (event.clientY - bounds.top) / bounds.height
+    setPlacementPosition(activeKey, nextX, nextY)
+  }
+
+  const regeneratePreviewWithLayout = async () => {
+    const sid = sessionId
+    if (!sid || !result) return
+
+    const draftSnapshot = layoutDraft.map((placement) => ({ ...placement }))
+    if (draftSnapshot.length === 0) {
+      setError('No furniture placements found for regeneration.')
+      return
+    }
+
+    const placements = toLayoutPayload(draftSnapshot)
+    setMessages((prev) => [...prev, { role: 'user', content: 'Update the preview with the moved furniture positions.' }])
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`${apiBase}/api/furnishing/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sid,
+          action: {
+            type: 'update_layout',
+            placements,
+          },
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data?.error as string | undefined) || `Request failed (${res.status})`)
+      }
+
+      const data = await res.json() as FurnishingResponse
+      setResult(data)
+      setLayoutPlacements(draftSnapshot)
+      setLayoutDraft(draftSnapshot)
+      setPreviewEditorOpen(false)
+      setActivePlacementKey(null)
+      dragStateRef.current = null
+      setMessages((prev) => [...prev, { role: 'assistant', content: data.assistantMessage }])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to regenerate furnishing preview.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const resetSession = () => {
     setSessionId(null)
     setMessages([])
     setResult(null)
     setChatInput('')
+    setPreviewEditorOpen(false)
+    setLayoutPlacements([])
+    setLayoutDraft([])
+    setActivePlacementKey(null)
+    dragStateRef.current = null
     setError(null)
   }
 
@@ -527,6 +840,7 @@ export default function FurnishingPreview() {
               <span>Coverage: {(result.spacing.coverageRatio * 100).toFixed(1)}%</span>
             )}
           </div>
+          {error && <p className="advisor-upload__error">{error}</p>}
 
           <div className="furnish-images">
             {roomPreview && (
@@ -538,7 +852,16 @@ export default function FurnishingPreview() {
             {result.previewImageDataUrl ? (
               <figure className="furnish-images__card">
                 <figcaption>Updated staged preview</figcaption>
-                <img src={result.previewImageDataUrl} alt="Staged preview" />
+                <button
+                  type="button"
+                  className="furnish-images__preview-btn"
+                  onClick={openLayoutEditor}
+                  disabled={loading || result.selectedItems.length === 0}
+                  aria-label="Open larger staged preview and move furniture"
+                >
+                  <img src={result.previewImageDataUrl} alt="Staged preview" />
+                </button>
+                <p className="furnish-images__hint">Click to open full-screen editor, move furniture, then regenerate.</p>
               </figure>
             ) : (
               <div className="furnish-images__card furnish-images__card--empty">
@@ -688,6 +1011,96 @@ export default function FurnishingPreview() {
             </div>
           </div>
         </section>
+      )}
+
+      {previewEditorOpen && result?.previewImageDataUrl && (
+        <div
+          className="furnish-editor__backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="furnish-editor-title"
+          onClick={closeLayoutEditor}
+        >
+          <section className="furnish-editor" onClick={(event) => event.stopPropagation()}>
+            <header className="furnish-editor__header">
+              <div>
+                <h2 id="furnish-editor-title">Move furniture on preview</h2>
+                <p>Drag each item marker to where you want it. Press Regenerate preview when done.</p>
+              </div>
+              <button type="button" className="furnish-editor__close" onClick={closeLayoutEditor} aria-label="Close preview editor">
+                ×
+              </button>
+            </header>
+
+            <div
+              className={`furnish-editor__canvas${activePlacementKey ? ' furnish-editor__canvas--placing' : ''}`}
+              ref={editorCanvasRef}
+              onPointerDown={moveActivePlacementToPointer}
+            >
+              <img src={result.previewImageDataUrl} alt="Large staged preview for placement editing" />
+              {layoutDraft.map((placement) => {
+                const key = toPlacementKey(placement.slotId, placement.optionId)
+                const selected = key === activePlacementKey
+                const step = 0.01
+                const acceleratedStep = 0.03
+                const horizontalAnchor = placement.x < 0.18
+                  ? 'left'
+                  : (placement.x > 0.82 ? 'right' : 'center')
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`furnish-editor__chip${selected ? ' furnish-editor__chip--active' : ''} furnish-editor__chip--anchor-${horizontalAnchor}`}
+                    style={{
+                      left: `${(placement.x * 100).toFixed(2)}%`,
+                      top: `${(placement.y * 100).toFixed(2)}%`,
+                      transform: horizontalAnchor === 'left'
+                        ? `translate(0, calc(-100% - 14px)) scale(${placement.scale.toFixed(2)})`
+                        : (horizontalAnchor === 'right'
+                            ? `translate(-100%, calc(-100% - 14px)) scale(${placement.scale.toFixed(2)})`
+                            : `translate(-50%, calc(-100% - 14px)) scale(${placement.scale.toFixed(2)})`),
+                    }}
+                    onClick={() => setActivePlacementKey(key)}
+                    onFocus={() => setActivePlacementKey(key)}
+                    onPointerDown={(event) => beginPlacementDrag(event, placement)}
+                    onKeyDown={(event) => {
+                      const delta = event.shiftKey ? acceleratedStep : step
+                      if (event.key === 'ArrowLeft') {
+                        event.preventDefault()
+                        nudgePlacement(placement, -delta, 0)
+                      } else if (event.key === 'ArrowRight') {
+                        event.preventDefault()
+                        nudgePlacement(placement, delta, 0)
+                      } else if (event.key === 'ArrowUp') {
+                        event.preventDefault()
+                        nudgePlacement(placement, 0, -delta)
+                      } else if (event.key === 'ArrowDown') {
+                        event.preventDefault()
+                        nudgePlacement(placement, 0, delta)
+                      }
+                    }}
+                  >
+                    <span className="furnish-editor__chip-label" title={placement.label}>{placement.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <p className="furnish-editor__tip">Tip: click a tag to select it, then click the image to place the exact anchor point.</p>
+
+            <div className="furnish-editor__actions">
+              <button type="button" className="btn btn--secondary" onClick={resetDraftLayout} disabled={loading}>
+                Reset positions
+              </button>
+              <button type="button" className="btn btn--secondary" onClick={closeLayoutEditor} disabled={loading}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn--primary" onClick={() => void regeneratePreviewWithLayout()} disabled={loading}>
+                {loading ? 'Regenerating...' : 'Regenerate preview'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {!sessionId && error && <p className="advisor-upload__error">{error}</p>}
